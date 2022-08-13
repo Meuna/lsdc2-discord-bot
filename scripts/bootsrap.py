@@ -5,8 +5,10 @@ app = input("Application id: ")
 token = getpass.getpass(prompt="Bot token: ")
 
 ADMINISTRATOR_PERM = 0x0000000000000008
+MANAGER_PERM = 0x0000000000000020
 
 headers = {"Authorization": f"Bot {token}"}
+
 url = f"https://discord.com/api/v10/applications/{app}/commands"
 
 json_bootstrap = {
@@ -43,6 +45,7 @@ print("ADD-GAME result: ", r.content)
 json_spinupgame = {
     "name": "spinup",
     "description": "Start a new server instance",
+    "default_member_permissions": MANAGER_PERM,
     "options": [
         {
             "type": 3,
