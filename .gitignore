@@ -1,0 +1,9 @@
+# Dev environment
+venv
+.vscode
+
+# Build
+frontend
+frontend.zip
+backend
+backend.zip
