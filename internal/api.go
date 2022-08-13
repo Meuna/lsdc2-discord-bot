@@ -27,8 +27,8 @@ const (
 
 type BackendCmd struct {
 	Args  interface{}
-	Token string `json:",omitempty"`
 	AppID string `json:",omitempty"`
+	Token string `json:",omitempty"`
 }
 
 func (cmd BackendCmd) Action() string {
@@ -133,19 +133,6 @@ func UnmarshallCustomIDAction(customID string) (BackendCmd, error) {
 }
 
 var slashCommands = []*discordgo.ApplicationCommand{
-	{
-		Name:        SpinupAPI,
-		Description: "Start a new server instance",
-		// DefaultMemberPermissions: &discordgo.PermissionManageServer,
-		Options: []*discordgo.ApplicationCommandOption{
-			{
-				Name:        "game-type",
-				Description: "Game type to start",
-				Required:    true,
-				Type:        discordgo.ApplicationCommandOptionString,
-			},
-		},
-	},
 	{
 		Name:        DestroyAPI,
 		Description: "Destroy a server",
