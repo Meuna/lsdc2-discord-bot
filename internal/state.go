@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"fmt"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -61,29 +60,25 @@ type ServerSpec struct {
 	ServerCount   int               `json:"severCount"`
 }
 
-func (s ServerSpec) EnsureComplete() error {
+func (s ServerSpec) MissingField() []string {
 	missingFields := []string{}
 	if s.Name == "" {
-		missingFields = append(missingFields, "Name")
+		missingFields = append(missingFields, "name")
 	}
 	if s.Image == "" {
-		missingFields = append(missingFields, "Image")
+		missingFields = append(missingFields, "image")
 	}
 	if s.Cpu == "" {
-		missingFields = append(missingFields, "Cpu")
+		missingFields = append(missingFields, "cpu")
 	}
 	if s.Memory == "" {
-		missingFields = append(missingFields, "Memory")
+		missingFields = append(missingFields, "memory")
 	}
 	if len(s.PortMap) == 0 {
-		missingFields = append(missingFields, "PortMap")
+		missingFields = append(missingFields, "portMap")
 	}
 
-	if len(missingFields) > 0 {
-		return fmt.Errorf("Spec is missing the following parameters %s", missingFields)
-	} else {
-		return nil
-	}
+	return missingFields
 }
 
 type ServerInstance struct {

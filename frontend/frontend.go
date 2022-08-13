@@ -327,7 +327,7 @@ func (bot Frontend) routeMessageComponent(itn discordgo.Interaction) (events.API
 		return bot.reply("🚫 Internal error")
 	}
 
-	return bot.reply("Request for %s sent...", cmd.Action())
+	return bot.ackMessage()
 }
 
 func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
@@ -402,7 +402,7 @@ func (bot Frontend) requestNewGameRegister(itn discordgo.Interaction) (events.AP
 		fmt.Println("callBackend failed", err)
 		return bot.reply("🚫 Internal error")
 	}
-	return bot.reply("Register request sent ...")
+	return bot.ackMessage()
 }
 
 func (bot Frontend) confirmGuildBootstrap(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
@@ -420,7 +420,7 @@ func (bot Frontend) confirmServerDestruction(itn discordgo.Interaction) (events.
 
 	// Retrieve the chanel ID
 	inst := internal.ServerInstance{}
-	err := internal.DynamodbScanFind(bot.InstanceTable, "Name", serverName, &inst)
+	err := internal.DynamodbScanFind(bot.InstanceTable, "name", serverName, &inst)
 	if err != nil {
 		fmt.Println("DynamodbScanFind failed", err)
 		return bot.reply("🚫 Internal error")
@@ -495,7 +495,7 @@ func (bot Frontend) requestServerCreation(itn discordgo.Interaction) (events.API
 		fmt.Println("callBackend failed", err)
 		return bot.reply("🚫 Internal error")
 	}
-	return bot.reply("Server request for %s sent ...", args.GameName)
+	return bot.ackMessage()
 }
 
 //
@@ -507,7 +507,7 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
 		fmt.Println("DynamodbGetItem failed", err)
-		return bot.reply("🚫 Internal error")
+		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
 	// Check that the task is not yet running
@@ -553,7 +553,7 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
 		fmt.Println("DynamodbGetItem failed", err)
-		return bot.reply("🚫 Internal error")
+		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
 	// Check that the task is not yet running
@@ -573,7 +573,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
 		fmt.Println("DynamodbGetItem failed", err)
-		return bot.reply("🚫 Internal error")
+		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 	if inst.TaskArn == "" {
 		return bot.reply("🟥 Server offline")
