@@ -13,6 +13,7 @@ jbody = requests.get(url, headers=headers).json()
 print(f"Number of global commands: {len(jbody)}")
 
 for cmd in jbody:
+    print(f"Deleting command: {cmd['name']}")
     cmd_url = url + "/" + cmd["id"]
     r = requests.delete(cmd_url, headers=headers)
 
@@ -22,5 +23,6 @@ jbody = requests.get(url, headers=headers).json()
 print(f"Number of guilds commands: {len(jbody)}")
 
 for cmd in jbody:
+    print(f"Deleting command: {cmd['name']}")
     cmd_url = url + "/" + cmd["id"]
     r = requests.delete(cmd_url, headers=headers)
