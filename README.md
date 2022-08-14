@@ -1,3 +1,3 @@
 # lsdc2-discord-bot
 
-The Discord to drive an LSDC2 stack.
+The Discord bot to drive an LSDC2 stack.

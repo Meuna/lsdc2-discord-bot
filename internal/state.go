@@ -81,12 +81,15 @@ func (s ServerSpec) MissingField() []string {
 	return missingFields
 }
 
-type ServerInstance struct {
-	ChannelID     string `json:"key"`
-	Name          string `json:"name"`
-	TaskFamily    string `json:"taskFamily"`
-	SecurityGroup string `json:"securityGroup"`
-	TaskArn       string `json:"taskArn"`
+func (s ServerSpec) OpenPorts() []string {
+	keys := make([]string, len(s.PortMap))
+
+	idx := 0
+	for k := range s.PortMap {
+		keys[idx] = k
+		idx++
+	}
+	return keys
 }
 
 func (s *ServerSpec) AwsEnvSpec() []*ecs.KeyValuePair {
@@ -132,13 +135,22 @@ func (s *ServerSpec) AwsIpPermissionSpec() []*ec2.IpPermission {
 	return permissions
 }
 
+type ServerInstance struct {
+	ChannelID     string `json:"key"`
+	Name          string `json:"name"`
+	SpecName      string `json:"specName"`
+	TaskFamily    string `json:"taskFamily"`
+	SecurityGroup string `json:"securityGroup"`
+	TaskArn       string `json:"taskArn"`
+}
+
 const (
 	TaskStopped = iota
 	TaskStopping
 	TaskProvisioning
 	TaskContainerStopping
 	TaskContainerProvisioning
-	TaskActive
+	TaskRunning
 )
 
 func GetTaskStatus(task *ecs.Task) int {
@@ -153,6 +165,7 @@ func GetTaskStatus(task *ecs.Task) int {
 	if Contains(provisioningStatus, *task.LastStatus) {
 		return TaskProvisioning
 	}
+	// From here, we know that task.LastStatus="RUNNING"
 	offlineStatus = []string{"REGISTRATION_FAILED", "INACTIVE", "DEREGISTERING", "DRAINING"}
 	if len(task.Containers) == 0 || Contains(offlineStatus, *task.Containers[0].LastStatus) {
 		return TaskContainerStopping
@@ -160,5 +173,9 @@ func GetTaskStatus(task *ecs.Task) int {
 	if *task.Containers[0].LastStatus == "REGISTERING" {
 		return TaskContainerProvisioning
 	}
-	return TaskActive
+	// We take a last step to check that the task is not heading offline
+	if *task.DesiredStatus == "STOPPED" {
+		return TaskContainerStopping
+	}
+	return TaskRunning
 }

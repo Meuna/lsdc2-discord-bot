@@ -507,6 +507,9 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
 		fmt.Println("DynamodbGetItem failed", err)
+		return bot.reply("🚫 Internal error")
+	}
+	if inst.SpecName == "" {
 		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
@@ -527,7 +530,7 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 				return bot.reply("⚠ Container is going offline. Please wait and try again")
 			case internal.TaskContainerProvisioning:
 				return bot.reply("⚠ Container is starting. Please wait a few minutes")
-			case internal.TaskActive:
+			case internal.TaskRunning:
 				return bot.serverStatus(channelID)
 			}
 			// No match == we can start a server
@@ -553,6 +556,9 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
 		fmt.Println("DynamodbGetItem failed", err)
+		return bot.reply("🚫 Internal error")
+	}
+	if inst.SpecName == "" {
 		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
@@ -573,8 +579,19 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
 		fmt.Println("DynamodbGetItem failed", err)
+		return bot.reply("🚫 Internal error")
+	}
+	if inst.SpecName == "" {
 		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
+
+	spec := internal.ServerSpec{}
+	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	if err != nil {
+		fmt.Println("DynamodbGetItem failed", err)
+		return bot.reply("🚫 Internal error")
+	}
+
 	if inst.TaskArn == "" {
 		return bot.reply("🟥 Server offline")
 	}
@@ -602,7 +619,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 		fmt.Printf("GetTaskIP failed with error: %s\n", err)
 		return bot.reply("⚠ Public IP not available, contact administrator")
 	}
-	return bot.reply("✅ Server online at %s", ip)
+	return bot.reply("✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
 }
 
 func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyResponse, error) {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -20,17 +21,23 @@ func main() {
 	lambda.StartWithContext(ctx, handleEvent)
 }
 
-func handleEvent(ctx context.Context, event events.SQSEvent) error {
+type Event struct {
+	events.SQSEvent
+	events.CloudWatchEvent
+}
+
+func handleEvent(ctx context.Context, event Event) error {
 	bot := ctx.Value("bot").(Backend)
 
-	for _, msg := range event.Records {
-		cmd, err := internal.UnmarshallQueuedAction(msg)
-		if err != nil {
-			fmt.Printf("Error %s with msg: %+v\n", err, msg)
-		} else {
-			bot.routeFcn(cmd)
-		}
+	if event.Source == "" {
+		fmt.Println("Received SQS event")
+		bot.handleSQSEvent(event.SQSEvent)
+	} else {
+		fmt.Println("Received '%s' CloudWatch event", event.DetailType)
+		bot.handleCloudWatchEvent(event.CloudWatchEvent)
 	}
+
+	// We make the bot unable to fail: events will never get back to the queue
 	return nil
 }
 
@@ -46,9 +53,45 @@ type Backend struct {
 	internal.BotEnv
 }
 
+func (bot Backend) handleSQSEvent(event events.SQSEvent) {
+	for _, msg := range event.Records {
+		cmd, err := internal.UnmarshallQueuedAction(msg)
+		if err != nil {
+			fmt.Printf("Error %s with msg: %+v\n", err, msg)
+		} else {
+			bot.routeFcn(cmd)
+		}
+	}
+}
+
+func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
+	switch event.DetailType {
+	case "ECS Task State Change":
+		bot.notifyTaskUpdate(event)
+	default:
+		fmt.Printf("%s event not handled\n", event.DetailType)
+	}
+}
+
 //
 //	Bot reply
 //
+
+func (bot Backend) message(channelID string, msg string, fmtarg ...interface{}) {
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		fmt.Println("discordgo.New failed", err)
+		return
+	}
+
+	_, err = sess.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content: fmt.Sprintf(msg, fmtarg...),
+	})
+	if err != nil {
+		fmt.Println("InteractionResponseEdit failed", err)
+		return
+	}
+}
 
 func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...interface{}) {
 	sess, err := discordgo.New("Bot " + bot.Token)
@@ -61,10 +104,13 @@ func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...inter
 		AppID: cmd.AppID,
 		Token: cmd.Token,
 	}
-	newMsg := discordgo.WebhookEdit{
+	_, err = sess.InteractionResponseEdit(&itn, &discordgo.WebhookEdit{
 		Content: fmt.Sprintf(msg, fmtarg...),
+	})
+	if err != nil {
+		fmt.Println("InteractionResponseEdit failed", err)
+		return
 	}
-	sess.InteractionResponseEdit(&itn, &newMsg)
 }
 
 //
@@ -80,7 +126,7 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 		bot.bootstrapGuild(cmd)
 
 	case internal.SpinupAPI:
-		bot.createServer(cmd)
+		bot.spinupServer(cmd)
 
 	case internal.DestroyAPI:
 		bot.destroyServer(cmd)
@@ -270,7 +316,7 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "✅ Boostrap done !")
 }
 
-func (bot Backend) createServer(cmd internal.BackendCmd) {
+func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	args := cmd.Args.(*internal.SpinupArgs)
 	fmt.Printf("Received server creation request with args %+v\n", args)
 
@@ -333,6 +379,7 @@ func (bot Backend) createServer(cmd internal.BackendCmd) {
 	fmt.Printf("Create %s/%s: register instance\n", args.GuildID, args.GameName)
 	inst := internal.ServerInstance{
 		Name:          instName,
+		SpecName:      spec.Name,
 		ChannelID:     channel.ID,
 		TaskFamily:    taskFamily,
 		SecurityGroup: spec.SecurityGroup,
@@ -385,5 +432,46 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	bot.followUp(cmd, "✅ Server deletion done !")
+	bot.followUp(cmd, "✅ Server destruction done !")
+}
+
+//
+//	CloudWatch events
+//
+
+func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
+	fmt.Println("Received ECS task state")
+
+	task := ecs.Task{}
+	json.Unmarshal(event.Detail, &task)
+
+	inst := internal.ServerInstance{}
+	err := internal.DynamodbScanFind(bot.InstanceTable, "taskArn", *task.TaskArn, &inst)
+	if err != nil {
+		fmt.Println("DynamodbGetItem failed", err)
+		return
+	}
+
+	spec := internal.ServerSpec{}
+	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	if err != nil {
+		fmt.Println("DynamodbGetItem failed", err)
+		return
+	}
+
+	switch internal.GetTaskStatus(&task) {
+	case internal.TaskProvisioning:
+		bot.message(inst.ChannelID, "📢 Server task state: %s", *task.LastStatus)
+	case internal.TaskRunning:
+		ip, err := internal.GetTaskIP(&task, bot.Lsdc2Stack)
+		if err != nil {
+			ip = "error retrieving ip"
+		}
+		bot.message(inst.ChannelID, "📢 Server task state: %s\nIP: %s (open ports: %s)",
+			*task.LastStatus, ip, spec.OpenPorts())
+	case internal.TaskContainerStopping:
+		bot.message(inst.ChannelID, "📢 Server task is going offline")
+	case internal.TaskStopped:
+		bot.message(inst.ChannelID, "📢 Server task went offline")
+	}
 }
