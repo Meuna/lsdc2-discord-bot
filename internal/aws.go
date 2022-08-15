@@ -12,7 +12,26 @@ import (
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go/service/ssm"
 )
+
+func GetParameter(name string) (string, error) {
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+	svc := ssm.New(sess)
+
+	input := &ssm.GetParameterInput{
+		Name:           aws.String(name),
+		WithDecryption: aws.Bool(true),
+	}
+	param, err := svc.GetParameter(input)
+	if err != nil {
+		return "", err
+	}
+
+	return *param.Parameter.Value, nil
+}
 
 func QueueMessage(queueUrl string, msg string) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{

@@ -254,6 +254,7 @@ func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label stri
 
 func (bot Frontend) routeCommand(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
+	fmt.Printf("Routing '%s' application command\n", acd.Name)
 
 	switch acd.Name {
 	case internal.RegisterGameAPI:

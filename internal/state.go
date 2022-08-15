@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"encoding/json"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -10,11 +11,14 @@ import (
 )
 
 type DiscordSecrets struct {
-	Pkey  string `env:"DISCORD_PKEY"`
-	Token string `env:"DISCORD_TOKEN"`
+	Pkey         string `json:"pkey"`
+	Token        string `json:"token"`
+	ClientID     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
 }
 
 type Lsdc2Stack struct {
+	DiscordParam     string   `env:"DISCORD_PARAM"`
 	QueueUrl         string   `env:"BOT_QUEUE_URL"`
 	Vpc              string   `env:"VPC"`
 	Subnets          []string `env:"SUBNETS" envSeparator:";"`
@@ -41,7 +45,12 @@ func ParseEnv() (BotEnv, error) {
 		return bot, err
 	}
 
-	err = env.Parse(&bot.DiscordSecrets)
+	discordSecret, err := GetParameter(bot.DiscordParam)
+	if err != nil {
+		return bot, err
+	}
+
+	err = json.Unmarshal([]byte(discordSecret), &bot.DiscordSecrets)
 	if err != nil {
 		return bot, err
 	}

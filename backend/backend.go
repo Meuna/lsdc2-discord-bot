@@ -33,7 +33,7 @@ func handleEvent(ctx context.Context, event Event) error {
 		fmt.Println("Received SQS event")
 		bot.handleSQSEvent(event.SQSEvent)
 	} else {
-		fmt.Println("Received '%s' CloudWatch event", event.DetailType)
+		fmt.Printf("Received '%s' CloudWatch event\n", event.DetailType)
 		bot.handleCloudWatchEvent(event.CloudWatchEvent)
 	}
 
