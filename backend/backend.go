@@ -382,7 +382,7 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 		ParentID: gc.ChannelCategoryID,
 		PermissionOverwrites: []*discordgo.PermissionOverwrite{
 			internal.PrivateChannelOverwrite(args.GuildID),
-			internal.ViewAppcmdOverwrite(gc.AdminChannelID),
+			internal.ViewAppcmdOverwrite(gc.AdminRoleID),
 			internal.AppcmdOverwrite(gc.UserRoleID),
 		},
 	})
@@ -392,27 +392,27 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 	}
 
 	// Setup permissions
-	// scope := "applications.commands.permissions.update applications.commands.update"
-	// sessBearer, cleanup, err := internal.BearerSession(bot.ClientID, bot.ClientSecret, scope)
-	// if err != nil {
-	// 	err = fmt.Errorf("BearerSession failed: %s", err)
-	// 	return
-	// }
-	// defer cleanup()
+	scope := "applications.commands.permissions.update applications.commands.update"
+	sessBearer, cleanup, err := internal.BearerSession(bot.ClientID, bot.ClientSecret, scope)
+	if err != nil {
+		err = fmt.Errorf("BearerSession failed: %s", err)
+		return
+	}
+	defer cleanup()
 
-	// fmt.Printf("Spinup %s: setting command rights on channel\n", args.GuildID)
-	// guildCmd, err := sessBearer.ApplicationCommands(cmd.AppID, args.GuildID)
-	// if err != nil {
-	// 	err = fmt.Errorf("ApplicationCommands failed: %s", err)
-	// 	return
-	// }
-	// userCmd := internal.FilterCommandsByName(guildCmd, internal.UserCmd)
+	fmt.Printf("Spinup %s: setting command rights on channel\n", args.GuildID)
+	guildCmd, err := sessBearer.ApplicationCommands(cmd.AppID, args.GuildID)
+	if err != nil {
+		err = fmt.Errorf("ApplicationCommands failed: %s", err)
+		return
+	}
+	userCmd := internal.FilterCommandsByName(guildCmd, internal.UserCmd)
 
-	// err = internal.EnableChannelCommands(sessBearer, cmd.AppID, args.GuildID, channel.ID, userCmd)
-	// if err != nil {
-	// 	err = fmt.Errorf("EnableChannelCommands failed: %s", err)
-	// 	return
-	// }
+	err = internal.EnableChannelCommands(sessBearer, cmd.AppID, args.GuildID, channel.ID, userCmd)
+	if err != nil {
+		err = fmt.Errorf("EnableChannelCommands failed: %s", err)
+		return
+	}
 
 	chanID = channel.ID
 	return
@@ -510,11 +510,11 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	// if err := bot._setupPermissions(cmd, args, gc); err != nil {
-	// 	fmt.Println("_createChannels failed", err)
-	// 	bot.followUp(cmd, "🚫 Internal error")
-	// 	return
-	// }
+	if err := bot._setupPermissions(cmd, args, gc); err != nil {
+		fmt.Println("_createChannels failed", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
 
 	// Register conf
 	fmt.Printf("Create %s: register instance\n", args.GuildID)
@@ -604,7 +604,7 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Bootst
 
 func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.BootstrapArgs, gc internal.GuildConf) error {
 	scope := "applications.commands.permissions.update applications.commands.update"
-	sess, cleanup, err := internal.BearerSession("", "", scope)
+	sess, cleanup, err := internal.BearerSession(bot.ClientID, bot.ClientSecret, scope)
 	if err != nil {
 		return fmt.Errorf("BearerSession failed: %s", err)
 	}
