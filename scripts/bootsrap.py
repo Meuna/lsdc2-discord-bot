@@ -11,15 +11,6 @@ headers = {"Authorization": f"Bot {token}"}
 
 url = f"https://discord.com/api/v10/applications/{app}/commands"
 
-json_bootstrap = {
-    "name": "bootstrap",
-    "type": 1,
-    "description": "Register LSDC2 bot commands in your guild",
-    "default_member_permissions": ADMINISTRATOR_PERM,
-}
-r = requests.post(url, headers=headers, json=json_bootstrap)
-print("BOOSTRAP result: ", r.content)
-
 json_registergame = {
     "name": "register-game",
     "type": 1,
@@ -40,7 +31,16 @@ json_registergame = {
     ],
 }
 r = requests.post(url, headers=headers, json=json_registergame)
-print("ADD-GAME result: ", r.content)
+print("REGISTER-GAME result: ", r.content)
+
+json_bootstrap = {
+    "name": "bootstrap",
+    "type": 1,
+    "description": "Register LSDC2 bot commands in your guild",
+    "default_member_permissions": ADMINISTRATOR_PERM,
+}
+r = requests.post(url, headers=headers, json=json_bootstrap)
+print("BOOSTRAP result: ", r.content)
 
 json_spinupgame = {
     "name": "spinup",
@@ -56,4 +56,4 @@ json_spinupgame = {
     ],
 }
 r = requests.post(url, headers=headers, json=json_spinupgame)
-print("ADD-GAME result: ", r.content)
+print("SPINUP result: ", r.content)
