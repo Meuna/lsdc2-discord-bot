@@ -136,46 +136,20 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 	}
 }
 
+//	Game registering
+
 func (bot Backend) registerGame(cmd internal.BackendCmd) {
-	args := cmd.Args.(*internal.RegisterGameArgs)
+	args := *cmd.Args.(*internal.RegisterGameArgs)
 	fmt.Printf("Received game register request with args %+v\n", args)
 
-	// Dispatch spec from URL or cmd
-	var specJson []byte
-	if len(args.SpecUrl) > 0 {
-		fmt.Printf("Registerting: spec download %s\n", args.SpecUrl)
-		resp, err := http.Get(args.SpecUrl)
-		if err != nil {
-			fmt.Println("http.Get failed", err)
-			bot.followUp(cmd, "🚫 Failed to get URL %s", args.SpecUrl)
-			return
-		}
-		defer resp.Body.Close()
-
-		specJson, err = ioutil.ReadAll(resp.Body)
-		if err != nil {
-			fmt.Println("ioutil.ReadAll failed", err)
-			bot.followUp(cmd, "🚫 Internal error")
-			return
-		}
-	} else if len(args.Spec) > 0 {
-		specJson = []byte(args.Spec)
-	} else {
-		fmt.Println("Both spec inputs are empty")
-		bot.followUp(cmd, "🚫 no spec provided")
-		return
-	}
-
-	// Parse spec
-	fmt.Printf("Registerting: parse spec\n")
-	spec := internal.ServerSpec{}
-	err := json.Unmarshal(specJson, &spec)
+	spec, err := bot._getSpec(cmd, args)
 	if err != nil {
-		fmt.Println("Unmarshal failed", err)
-		bot.followUp(cmd, "🚫 Spec parsing error")
+		fmt.Println("_getJsonSpec failed", err)
+		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
+	// Check spec is not missing any mandatory field
 	missingFields := spec.MissingField()
 	if len(missingFields) > 0 {
 		fmt.Printf("Spec if missing field %s\n", missingFields)
@@ -186,6 +160,11 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	// Check existing spec and abort/cleanup if necessary
 	fmt.Printf("Registerting %s: scan game list\n", spec.Name)
 	gameList, err := internal.DynamodbScanAttr(bot.SpecTable, "key")
+	if err != nil {
+		fmt.Println("DynamodbScanAttr failed", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
 
 	if internal.Contains(gameList, spec.Name) && !args.Overwrite {
 		fmt.Printf("Registerting %s: aborted, spec already exists\n", spec.Name)
@@ -207,45 +186,9 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	}
 	spec.SecurityGroup = sgID
 
-	// Retrieve spinup command
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		fmt.Println("discordgo.New failed", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-	fmt.Printf("Registerting %s: lookup spinup command\n", spec.Name)
-	allCmd, err := sess.ApplicationCommands(cmd.AppID, "")
-	if err != nil {
-		fmt.Println("ApplicationCommands failed", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-	var spinupCmd *discordgo.ApplicationCommand
-	for _, cmd := range allCmd {
-		if cmd.Name == internal.SpinupAPI {
-			spinupCmd = cmd
-			break
-		}
-	}
-	if spinupCmd == nil {
-		fmt.Println("spinup cmd not found")
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	// spinup command options update
-	gameList = append(gameList, spec.Name)
-	spinupCmd.Options[0].Choices = make([]*discordgo.ApplicationCommandOptionChoice, len(gameList))
-	for idx, gameName := range gameList {
-		spinupCmd.Options[0].Choices[idx] = &discordgo.ApplicationCommandOptionChoice{
-			Value: gameName,
-			Name:  gameName,
-		}
-	}
-	_, err = sess.ApplicationCommandEdit(cmd.AppID, "", spinupCmd.ID, spinupCmd)
-	if err != nil {
-		fmt.Println("ApplicationCommandEdit failed", err)
+	// Update spinup command
+	if err := bot._updateSpinupOptions(cmd, args, spec.Name, gameList); err != nil {
+		fmt.Println("_updateSpinupOptions failed", err)
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -262,73 +205,91 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "✅ %s register done !", spec.Name)
 }
 
-func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
-	args := cmd.Args.(*internal.BootstrapArgs)
-	fmt.Printf("Received bootstraping request with args %+v\n", args)
+func (bot Backend) _getSpec(cmd internal.BackendCmd, args internal.RegisterGameArgs) (spec internal.ServerSpec, err error) {
+	var jsonSpec []byte
+	// Dispatch spec source
+	if len(args.SpecUrl) > 0 {
+		// Spec is in args.SpecUrl
+		fmt.Printf("Registerting: spec download %s\n", args.SpecUrl)
+		resp, errZob := http.Get(args.SpecUrl)
+		if err != nil {
+			err = fmt.Errorf("http.Get failed: %s", errZob)
+			return
+		}
+		defer resp.Body.Close()
 
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		fmt.Println("discordgo.New failed", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	fmt.Printf("Bootstraping %s: command creation\n", args.GuildID)
-	if internal.CreateGuildCommands(sess, cmd.AppID, args.GuildID); err != nil {
-		fmt.Println("CreateGuildCommands failed", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	fmt.Printf("Bootstraping %s: LSDC2 category\n", args.GuildID)
-	lsdc2Category, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
-		Name: "LSDC2",
-		Type: discordgo.ChannelTypeGuildCategory,
-	})
-	if err != nil {
-		fmt.Println("GuildChannelCreateComplex failed", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-	fmt.Printf("Bootstraping %s: admin channel\n", args.GuildID)
-	_, err = sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
-		Name:     "Administration",
-		Type:     discordgo.ChannelTypeGuildText,
-		ParentID: lsdc2Category.ID,
-	})
-	if err != nil {
-		fmt.Println("GuildChannelCreateComplex failed", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-	fmt.Printf("Bootstraping %s: welcome channel\n", args.GuildID)
-	_, err = sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
-		Name:     "Welcome",
-		Type:     discordgo.ChannelTypeGuildText,
-		ParentID: lsdc2Category.ID,
-	})
-	if err != nil {
-		fmt.Println("GuildChannelCreateComplex failed", err)
-		bot.followUp(cmd, "🚫 Internal error")
+		jsonSpec, err = ioutil.ReadAll(resp.Body)
+		if err != nil {
+			err = fmt.Errorf("http.Get failed: %s", err)
+			return
+		}
+	} else if len(args.Spec) > 0 {
+		// Spec is in args.Spec
+		jsonSpec = []byte(args.Spec)
+	} else {
+		err = fmt.Errorf("Both spec inputs are empty")
 		return
 	}
 
-	bot.followUp(cmd, "✅ Boostrap done !")
+	// Parse spec
+	fmt.Printf("Registerting: parse spec\n")
+	if err = json.Unmarshal(jsonSpec, &spec); err != nil {
+		fmt.Errorf("Unmarshal failed: %s", err)
+		return
+	}
+
+	return
 }
 
-func (bot Backend) spinupServer(cmd internal.BackendCmd) {
-	args := cmd.Args.(*internal.SpinupArgs)
-	fmt.Printf("Received server creation request with args %+v\n", args)
-
-	fmt.Printf("Create %s/%s: get spec\n", args.GuildID, args.GameName)
-	spec := internal.ServerSpec{}
-	if err := internal.DynamodbGetItem(bot.SpecTable, args.GameName, &spec); err != nil {
-		fmt.Println("DynamodbGetItem failed", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
+func (bot Backend) _updateSpinupOptions(cmd internal.BackendCmd, args internal.RegisterGameArgs, specName string, gameList []string) error {
+	// Retrieve spinup command
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		return fmt.Errorf("discordgo.New failed", err)
 	}
-	if spec.Name == "" {
-		fmt.Printf("Create %s/%s: missing spec\n", args.GuildID, args.GameName)
+	fmt.Printf("Registerting %s: lookup spinup command\n", specName)
+	globalCmd, err := sess.ApplicationCommands(cmd.AppID, "")
+	if err != nil {
+		return fmt.Errorf("ApplicationCommands failed: %s", err)
+	}
+	var spinupCmd *discordgo.ApplicationCommand
+	for _, cmd := range globalCmd {
+		if cmd.Name == internal.SpinupAPI {
+			spinupCmd = cmd
+			break
+		}
+	}
+	if spinupCmd == nil {
+		return fmt.Errorf("spinup cmd not found")
+	}
+
+	// spinup command options update
+	gameList = append(gameList, specName)
+	spinupCmd.Options[0].Choices = make([]*discordgo.ApplicationCommandOptionChoice, len(gameList))
+	for idx, gameName := range gameList {
+		spinupCmd.Options[0].Choices[idx] = &discordgo.ApplicationCommandOptionChoice{
+			Value: gameName,
+			Name:  gameName,
+		}
+	}
+	_, err = sess.ApplicationCommandEdit(cmd.AppID, "", spinupCmd.ID, spinupCmd)
+	if err != nil {
+		return fmt.Errorf("ApplicationCommandEdit failed", err)
+	}
+
+	return nil
+}
+
+//	Game spinup
+
+func (bot Backend) spinupServer(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.SpinupArgs)
+	fmt.Printf("Received server spinup request with args %+v\n", args)
+
+	// Get spec
+	spec, err := bot._getSpecAndIncreaseCount(cmd, args)
+	if err != nil {
+		fmt.Println("_getSpecAndIncreaseCount failed", err)
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -336,32 +297,16 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	instName := fmt.Sprintf("%s-%d", args.GameName, spec.ServerCount)
 	taskFamily := fmt.Sprintf("lsdc2-%s-%s", args.GuildID, instName)
 
-	fmt.Printf("Create %s/%s: increment spec count\n", args.GuildID, args.GameName)
-	spec.ServerCount = spec.ServerCount + 1
-	if err := internal.DynamodbPutItem(bot.SpecTable, spec); err != nil {
-		fmt.Println("DynamodbPutItem failed", err)
+	// Create server channel
+	chanID, err := bot._createServerChannel(cmd, args, instName)
+	if err != nil {
+		fmt.Println("_createServerChannel failed", err)
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		fmt.Println("discordgo.New failed", err)
-		return
-	}
-
-	fmt.Printf("Create %s/%s: chan creation\n", args.GuildID, args.GameName)
-	channel, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
-		Name: instName,
-		Type: discordgo.ChannelTypeGuildText,
-	})
-	if err != nil {
-		fmt.Println("GuildChannelCreateComplex failed", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	fmt.Printf("Create %s/%s: task register\n", args.GuildID, args.GameName)
+	// Register ECS task
+	fmt.Printf("Spinup %s/%s: task register\n", args.GuildID, args.GameName)
 	if spec.EnvMap == nil {
 		spec.EnvMap = map[string]string{}
 	}
@@ -376,24 +321,107 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	fmt.Printf("Create %s/%s: register instance\n", args.GuildID, args.GameName)
+	// And register instance
+	fmt.Printf("Spinup %s/%s: register instance\n", args.GuildID, args.GameName)
 	inst := internal.ServerInstance{
 		Name:          instName,
 		SpecName:      spec.Name,
-		ChannelID:     channel.ID,
+		ChannelID:     chanID,
 		TaskFamily:    taskFamily,
 		SecurityGroup: spec.SecurityGroup,
 	}
 	if err = internal.DynamodbPutItem(bot.InstanceTable, inst); err != nil {
 		fmt.Println("DynamodbPutItem failed", err)
 		bot.followUp(cmd, "🚫 Internal error")
+		return
 	}
 
 	bot.followUp(cmd, "✅ %s server creation done !", args.GameName)
 }
 
+func (bot Backend) _getSpecAndIncreaseCount(cmd internal.BackendCmd, args internal.SpinupArgs) (spec internal.ServerSpec, err error) {
+	fmt.Printf("Spinup %s/%s: get spec\n", args.GuildID, args.GameName)
+	if err = internal.DynamodbGetItem(bot.SpecTable, args.GameName, &spec); err != nil {
+		err = fmt.Errorf("DynamodbGetItem failed: %s", err)
+		return
+	}
+	if spec.Name == "" {
+		err = fmt.Errorf("missing spec\n", args.GuildID, args.GameName)
+		return
+	}
+
+	fmt.Printf("Spinup %s/%s: increment spec count\n", args.GuildID, args.GameName)
+	spec.ServerCount = spec.ServerCount + 1
+	if err = internal.DynamodbPutItem(bot.SpecTable, spec); err != nil {
+		err = fmt.Errorf("DynamodbPutItem failed: %s", err)
+		return
+	}
+
+	return
+}
+
+func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.SpinupArgs, instName string) (chanID string, err error) {
+	// Retrieve guild conf
+	fmt.Printf("Spinup %s/%s: get guild conf\n", args.GuildID, args.GameName)
+	gc := internal.GuildConf{}
+	if err = internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gc); err != nil {
+		err = fmt.Errorf("DynamodbGetItem failed: %s", err)
+		return
+	}
+
+	// Create chan
+	sessBot, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		err = fmt.Errorf("discordgo.New failed: %s", err)
+		return
+	}
+	fmt.Printf("Spinup %s/%s: chan creation\n", args.GuildID, args.GameName)
+	channel, err := sessBot.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
+		Name:     instName,
+		Type:     discordgo.ChannelTypeGuildText,
+		ParentID: gc.ChannelCategoryID,
+		PermissionOverwrites: []*discordgo.PermissionOverwrite{
+			internal.PrivateChannelOverwrite(args.GuildID),
+			internal.ViewAppcmdOverwrite(gc.AdminChannelID),
+			internal.AppcmdOverwrite(gc.UserRoleID),
+		},
+	})
+	if err != nil {
+		err = fmt.Errorf("GuildChannelCreateComplex failed: %s", err)
+		return
+	}
+
+	// Setup permissions
+	// scope := "applications.commands.permissions.update applications.commands.update"
+	// sessBearer, cleanup, err := internal.BearerSession(bot.ClientID, bot.ClientSecret, scope)
+	// if err != nil {
+	// 	err = fmt.Errorf("BearerSession failed: %s", err)
+	// 	return
+	// }
+	// defer cleanup()
+
+	// fmt.Printf("Spinup %s: setting command rights on channel\n", args.GuildID)
+	// guildCmd, err := sessBearer.ApplicationCommands(cmd.AppID, args.GuildID)
+	// if err != nil {
+	// 	err = fmt.Errorf("ApplicationCommands failed: %s", err)
+	// 	return
+	// }
+	// userCmd := internal.FilterCommandsByName(guildCmd, internal.UserCmd)
+
+	// err = internal.EnableChannelCommands(sessBearer, cmd.AppID, args.GuildID, channel.ID, userCmd)
+	// if err != nil {
+	// 	err = fmt.Errorf("EnableChannelCommands failed: %s", err)
+	// 	return
+	// }
+
+	chanID = channel.ID
+	return
+}
+
+//	Game destroy
+
 func (bot Backend) destroyServer(cmd internal.BackendCmd) {
-	args := cmd.Args.(*internal.DestroyArgs)
+	args := *cmd.Args.(*internal.DestroyArgs)
 	fmt.Printf("Received server creation request with args %+v\n", args)
 
 	fmt.Printf("Destroy %s: get inst\n", args.ChannelID)
@@ -433,6 +461,178 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 	}
 
 	bot.followUp(cmd, "✅ Server destruction done !")
+}
+
+//	Bootstraping
+
+func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.BootstrapArgs)
+	fmt.Printf("Received bootstraping request with args %+v\n", args)
+
+	// Make sure the guild is not bootstrapped
+	fmt.Printf("Bootstraping %s: check if guild already exists\n", args.GuildID)
+	gcCheck := internal.GuildConf{}
+	if err := internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gcCheck); err != nil {
+		fmt.Println("DynamodbGetItem failed", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	if gcCheck.GuildID != "" {
+		fmt.Println("Guild already have an entry in table")
+		bot.followUp(cmd, "🚫 Guild already have an entry in bootsrap table")
+		return
+	}
+
+	// Command registering
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		fmt.Println("discordgo.New failed", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	fmt.Printf("Bootstraping %s: command creation\n", args.GuildID)
+	if err := internal.SetupLsdc2Commands(sess, cmd.AppID, args.GuildID); err != nil {
+		fmt.Println("SetupLsdc2Commands failed", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	gc := internal.GuildConf{
+		GuildID: args.GuildID,
+	}
+	if err := bot._createRoles(cmd, args, &gc); err != nil {
+		fmt.Println("_createRoles failed", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	if err := bot._createChannels(cmd, args, &gc); err != nil {
+		fmt.Println("_createChannels failed", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	// if err := bot._setupPermissions(cmd, args, gc); err != nil {
+	// 	fmt.Println("_createChannels failed", err)
+	// 	bot.followUp(cmd, "🚫 Internal error")
+	// 	return
+	// }
+
+	// Register conf
+	fmt.Printf("Create %s: register instance\n", args.GuildID)
+	if err := internal.DynamodbPutItem(bot.GuildTable, gc); err != nil {
+		fmt.Println("DynamodbPutItem failed", err)
+		bot.followUp(cmd, "🚫 Internal error")
+	}
+
+	bot.followUp(cmd, "✅ Boostrap complete !")
+}
+
+func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.BootstrapArgs, gc *internal.GuildConf) error {
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		return fmt.Errorf("discordgo.New failed: %s", err)
+	}
+
+	fmt.Printf("Bootstraping %s: LSDC2 roles\n", args.GuildID)
+	adminRole, err := sess.GuildRoleCreate(args.GuildID)
+	if err != nil {
+		return fmt.Errorf("GuildRoleCreate failed: %s", err)
+	}
+	_, err = sess.GuildRoleEdit(args.GuildID, adminRole.ID, "LSDC2 Admin", 0x8833ff, true, 0, true)
+	if err != nil {
+		return fmt.Errorf("GuildRoleEdit failed: %s", err)
+	}
+	userRole, err := sess.GuildRoleCreate(args.GuildID)
+	if err != nil {
+		return fmt.Errorf("GuildRoleCreate failed: %s", err)
+	}
+	_, err = sess.GuildRoleEdit(args.GuildID, userRole.ID, "LSDC2 User", 0x33aaff, true, 0, true)
+	if err != nil {
+		return fmt.Errorf("GuildRoleEdit failed: %s", err)
+	}
+
+	gc.AdminRoleID = adminRole.ID
+	gc.UserRoleID = userRole.ID
+
+	return nil
+}
+
+func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.BootstrapArgs, gc *internal.GuildConf) error {
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		return fmt.Errorf("discordgo.New failed: %s", err)
+	}
+
+	fmt.Printf("Bootstraping %s: LSDC2 category\n", args.GuildID)
+	lsdc2Category, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
+		Name: "LSDC2",
+		Type: discordgo.ChannelTypeGuildCategory,
+	})
+	if err != nil {
+		return fmt.Errorf("GuildChannelCreateComplex failed: %s", err)
+	}
+	fmt.Printf("Bootstraping %s: admin channel\n", args.GuildID)
+	adminChan, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
+		Name:     "administration",
+		Type:     discordgo.ChannelTypeGuildText,
+		ParentID: lsdc2Category.ID,
+		PermissionOverwrites: []*discordgo.PermissionOverwrite{
+			internal.PrivateChannelOverwrite(args.GuildID),
+			internal.ViewAppcmdOverwrite(gc.AdminRoleID),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("GuildChannelCreateComplex failed: %s", err)
+	}
+	fmt.Printf("Bootstraping %s: welcome channel\n", args.GuildID)
+	_, err = sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
+		Name:     "welcome",
+		Type:     discordgo.ChannelTypeGuildText,
+		ParentID: lsdc2Category.ID,
+		PermissionOverwrites: []*discordgo.PermissionOverwrite{
+			internal.ViewInviteOverwrite(gc.AdminRoleID),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("GuildChannelCreateComplex failed: %s", err)
+	}
+
+	gc.ChannelCategoryID = lsdc2Category.ID
+	gc.AdminChannelID = adminChan.ID
+
+	return nil
+}
+
+func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.BootstrapArgs, gc internal.GuildConf) error {
+	scope := "applications.commands.permissions.update applications.commands.update"
+	sess, cleanup, err := internal.BearerSession("", "", scope)
+	if err != nil {
+		return fmt.Errorf("BearerSession failed: %s", err)
+	}
+	defer cleanup()
+
+	fmt.Printf("Bootstraping %s: setting commands rights\n", args.GuildID)
+	allCmd, err := internal.GetAllCommands(sess, cmd.AppID, args.GuildID)
+	if err != nil {
+		return fmt.Errorf("GetAllCommands failed: %s", err)
+	}
+	ownerCmd := internal.FilterCommandsByName(allCmd, internal.OwnerCmd)
+	adminCmd := internal.FilterCommandsByName(allCmd, internal.AdminCmd)
+	userCmd := internal.FilterCommandsByName(allCmd, internal.UserCmd)
+
+	err = internal.DisableCommands(sess, cmd.AppID, args.GuildID, ownerCmd)
+	if err != nil {
+		return fmt.Errorf("DisableCommands failed: %s", err)
+	}
+	err = internal.SetupAdminCommands(sess, cmd.AppID, args.GuildID, gc, adminCmd)
+	if err != nil {
+		return fmt.Errorf("SetupAdminCommands failed: %s", err)
+	}
+	err = internal.SetupUserCommands(sess, cmd.AppID, args.GuildID, gc, userCmd)
+	if err != nil {
+		return fmt.Errorf("SetupUserCommands failed: %s", err)
+	}
+
+	return nil
 }
 
 //

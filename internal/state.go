@@ -22,6 +22,7 @@ type Lsdc2Stack struct {
 	LogGroup         string   `env:"LOG_GROUP"`
 	SaveGameBucket   string   `env:"SAVEGAME_BUCKET"`
 	SpecTable        string   `env:"SPEC_TABLE"`
+	GuildTable       string   `env:"GUILD_TABLE"`
 	InstanceTable    string   `env:"INSTANCE_TABLE"`
 	ExecutionRoleArn string   `env:"EXECUTION_ROLE_ARN"`
 	TaskRoleArn      string   `env:"TASK_ROLE_ARN"`
@@ -133,6 +134,14 @@ func (s *ServerSpec) AwsIpPermissionSpec() []*ec2.IpPermission {
 		idx = idx + 1
 	}
 	return permissions
+}
+
+type GuildConf struct {
+	GuildID           string `json:"key"`
+	ChannelCategoryID string `json:"channelCategory"`
+	AdminChannelID    string `json:"adminChannel"`
+	AdminRoleID       string `json:"adminRole"`
+	UserRoleID        string `json:"userRole"`
 }
 
 type ServerInstance struct {

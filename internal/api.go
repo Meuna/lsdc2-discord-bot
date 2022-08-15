@@ -5,19 +5,24 @@ import (
 	"fmt"
 
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/bwmarrin/discordgo"
 )
 
 const (
-	RegisterGameAPI string = "register-game"
-	BootstrapAPI    string = "bootstrap"
-	SpinupAPI       string = "spinup"
-	DestroyAPI      string = "destroy"
-	StartAPI        string = "start"
-	StopAPI         string = "stop"
-	StatusAPI       string = "status"
-	DownloadAPI     string = "download"
-	UploadAPI       string = "upload"
+	RegisterGameAPI = "register-game"
+	BootstrapAPI    = "bootstrap"
+	SpinupAPI       = "spinup"
+	DestroyAPI      = "destroy"
+	StartAPI        = "start"
+	StopAPI         = "stop"
+	StatusAPI       = "status"
+	DownloadAPI     = "download"
+	UploadAPI       = "upload"
+)
+
+var (
+	OwnerCmd = []string{RegisterGameAPI, BootstrapAPI}
+	AdminCmd = []string{SpinupAPI, DestroyAPI}
+	UserCmd  = []string{StartAPI, StopAPI, StatusAPI, DownloadAPI, UploadAPI}
 )
 
 const (
@@ -130,51 +135,4 @@ func UnmarshallCustomIDAction(customID string) (BackendCmd, error) {
 	cmd := BackendCmd{}
 	err := json.Unmarshal([]byte(customID), &cmd)
 	return cmd, err
-}
-
-var slashCommands = []*discordgo.ApplicationCommand{
-	{
-		Name:        DestroyAPI,
-		Description: "Destroy a server",
-		// DefaultMemberPermissions: &discordgo.PermissionManageServer,
-		Options: []*discordgo.ApplicationCommandOption{
-			{
-				Name:        "server-name",
-				Description: "The name of the server to destroy",
-				Required:    true,
-				Type:        discordgo.ApplicationCommandOptionString,
-			},
-		},
-	},
-	{
-		Name:        StartAPI,
-		Description: "Start a server instance (run in instance channel)",
-	},
-	{
-		Name:        StopAPI,
-		Description: "Stop a running server instance (run in instance channel)",
-	},
-	{
-		Name:        StatusAPI,
-		Description: "Give the status of a server instance (run in instance channel)",
-	},
-	{
-		Name:        DownloadAPI,
-		Description: "Retrieve the savegame of a server instance (run in instance channel)",
-	},
-	{
-		Name:        UploadAPI,
-		Description: "Upload a savegame to a server instance (run in instance channel)",
-	},
-}
-
-func CreateGuildCommands(sess *discordgo.Session, appID string, guildID string) error {
-	for _, cmd := range slashCommands {
-		fmt.Printf("Bootstraping %s: %s command\n", guildID, cmd.Name)
-		_, err := sess.ApplicationCommandCreate(appID, guildID, cmd)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
