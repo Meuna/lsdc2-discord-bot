@@ -15,6 +15,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/ssm"
 )
 
+//
+// SSM helpers
+//
+
 func GetParameter(name string) (string, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -33,6 +37,10 @@ func GetParameter(name string) (string, error) {
 	return *param.Parameter.Value, nil
 }
 
+//
+// SQS helpers
+//
+
 func QueueMessage(queueUrl string, msg string) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -47,6 +55,10 @@ func QueueMessage(queueUrl string, msg string) error {
 
 	return err
 }
+
+//
+// DynamoDB helpers
+//
 
 func DynamodbGetItem(tableName string, key string, out interface{}) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
@@ -155,6 +167,19 @@ func DynamodbScanAttr(tableName string, key string) ([]string, error) {
 	return out, err
 }
 
+//
+// ECS helpers
+//
+
+func ecsTags() []*ecs.Tag {
+	return []*ecs.Tag{
+		{
+			Key:   aws.String("lsdc2-src"),
+			Value: aws.String("discord"),
+		},
+	}
+}
+
 func RegisterTask(instName string, spec ServerSpec, stack Lsdc2Stack) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -162,6 +187,7 @@ func RegisterTask(instName string, spec ServerSpec, stack Lsdc2Stack) error {
 	svc := ecs.New(sess)
 
 	input := &ecs.RegisterTaskDefinitionInput{
+		Tags:                    ecsTags(),
 		Family:                  aws.String(instName),
 		Cpu:                     aws.String(spec.Cpu),
 		Memory:                  aws.String(spec.Memory),
@@ -223,6 +249,102 @@ func DeregisterTaskFamiliy(taskFamily string) error {
 	return err
 }
 
+func StartTask(inst ServerInstance, stack Lsdc2Stack) (string, error) {
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+	svc := ecs.New(sess)
+
+	subnets := make([]*string, len(stack.Subnets))
+	for idx, sn := range stack.Subnets {
+		subnets[idx] = aws.String(sn)
+	}
+
+	input := &ecs.RunTaskInput{
+		Tags: ecsTags(),
+		CapacityProviderStrategy: []*ecs.CapacityProviderStrategyItem{
+			{CapacityProvider: aws.String("FARGATE_SPOT")},
+		},
+		Cluster: aws.String(stack.Cluster),
+		Count:   aws.Int64(1),
+		NetworkConfiguration: &ecs.NetworkConfiguration{
+			AwsvpcConfiguration: &ecs.AwsVpcConfiguration{
+				AssignPublicIp: aws.String("ENABLED"),
+				SecurityGroups: []*string{aws.String(inst.SecurityGroup)},
+				Subnets:        subnets,
+			},
+		},
+		TaskDefinition: aws.String(inst.TaskFamily),
+	}
+	result, err := svc.RunTask(input)
+	if err != nil {
+		return "", err
+	}
+	if len(result.Tasks) == 0 {
+		return "", errors.New("task creation returned empty results")
+	}
+
+	return *result.Tasks[0].TaskArn, err
+}
+
+func StopTask(inst ServerInstance, stack Lsdc2Stack) error {
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+	svc := ecs.New(sess)
+
+	subnets := make([]*string, len(stack.Subnets))
+	for idx, sn := range stack.Subnets {
+		subnets[idx] = aws.String(sn)
+	}
+
+	input := &ecs.StopTaskInput{
+		Cluster: aws.String(stack.Cluster),
+		Task:    aws.String(inst.TaskArn),
+	}
+	_, err := svc.StopTask(input)
+
+	return err
+}
+
+func DescribeTask(inst ServerInstance, stack Lsdc2Stack) (*ecs.Task, error) {
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+	svc := ecs.New(sess)
+
+	inputDt := &ecs.DescribeTasksInput{
+		Cluster: aws.String(stack.Cluster),
+		Tasks:   []*string{aws.String(inst.TaskArn)},
+	}
+	resultDt, err := svc.DescribeTasks(inputDt)
+	if err != nil {
+		return nil, err
+	}
+	if len(resultDt.Tasks) == 0 {
+		return nil, nil
+	}
+	return resultDt.Tasks[0], nil
+}
+
+//
+// EC2 helpers
+//
+
+func ec2Tags(resType string) []*ec2.TagSpecification {
+	return []*ec2.TagSpecification{
+		{
+			ResourceType: aws.String(resType),
+			Tags: []*ec2.Tag{
+				{
+					Key:   aws.String("lsdc2-src"),
+					Value: aws.String("discord"),
+				},
+			},
+		},
+	}
+}
+
 func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (string, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -230,9 +352,10 @@ func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (string, error) {
 	svc := ec2.New(sess)
 
 	inputSg := &ec2.CreateSecurityGroupInput{
-		GroupName:   aws.String(spec.Name),
-		Description: aws.String(fmt.Sprintf("Security group for LSDC2 %s", spec.Name)),
-		VpcId:       aws.String(stack.Vpc),
+		TagSpecifications: ec2Tags("security-group"),
+		GroupName:         aws.String(spec.Name),
+		Description:       aws.String(fmt.Sprintf("Security group for LSDC2 %s", spec.Name)),
+		VpcId:             aws.String(stack.Vpc),
 	}
 	resultSg, err := svc.CreateSecurityGroup(inputSg)
 	if err != nil {
@@ -241,8 +364,9 @@ func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (string, error) {
 
 	// Create ingress rules
 	inputIngress := &ec2.AuthorizeSecurityGroupIngressInput{
-		GroupId:       resultSg.GroupId,
-		IpPermissions: spec.AwsIpPermissionSpec(),
+		TagSpecifications: ec2Tags("security-group-rule"),
+		GroupId:           resultSg.GroupId,
+		IpPermissions:     spec.AwsIpPermissionSpec(),
 	}
 	_, err = svc.AuthorizeSecurityGroupIngress(inputIngress)
 	if err != nil {
@@ -307,83 +431,6 @@ func DeleteSecurityGroup(groupID string) error {
 	}
 	_, err := svc.DeleteSecurityGroup(input)
 	return err
-}
-
-func StartTask(inst ServerInstance, stack Lsdc2Stack) (string, error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ecs.New(sess)
-
-	subnets := make([]*string, len(stack.Subnets))
-	for idx, sn := range stack.Subnets {
-		subnets[idx] = aws.String(sn)
-	}
-
-	input := &ecs.RunTaskInput{
-		CapacityProviderStrategy: []*ecs.CapacityProviderStrategyItem{
-			{CapacityProvider: aws.String("FARGATE_SPOT")},
-		},
-		Cluster: aws.String(stack.Cluster),
-		Count:   aws.Int64(1),
-		NetworkConfiguration: &ecs.NetworkConfiguration{
-			AwsvpcConfiguration: &ecs.AwsVpcConfiguration{
-				AssignPublicIp: aws.String("ENABLED"),
-				SecurityGroups: []*string{aws.String(inst.SecurityGroup)},
-				Subnets:        subnets,
-			},
-		},
-		TaskDefinition: aws.String(inst.TaskFamily),
-	}
-	result, err := svc.RunTask(input)
-	if err != nil {
-		return "", err
-	}
-	if len(result.Tasks) == 0 {
-		return "", errors.New("task creation returned empty results")
-	}
-
-	return *result.Tasks[0].TaskArn, err
-}
-
-func StopTask(inst ServerInstance, stack Lsdc2Stack) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ecs.New(sess)
-
-	subnets := make([]*string, len(stack.Subnets))
-	for idx, sn := range stack.Subnets {
-		subnets[idx] = aws.String(sn)
-	}
-
-	input := &ecs.StopTaskInput{
-		Cluster: aws.String(stack.Cluster),
-		Task:    aws.String(inst.TaskArn),
-	}
-	_, err := svc.StopTask(input)
-
-	return err
-}
-
-func DescribeTask(inst ServerInstance, stack Lsdc2Stack) (*ecs.Task, error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ecs.New(sess)
-
-	inputDt := &ecs.DescribeTasksInput{
-		Cluster: aws.String(stack.Cluster),
-		Tasks:   []*string{aws.String(inst.TaskArn)},
-	}
-	resultDt, err := svc.DescribeTasks(inputDt)
-	if err != nil {
-		return nil, err
-	}
-	if len(resultDt.Tasks) == 0 {
-		return nil, nil
-	}
-	return resultDt.Tasks[0], nil
 }
 
 func GetTaskIP(task *ecs.Task, stack Lsdc2Stack) (string, error) {
