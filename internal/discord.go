@@ -251,18 +251,18 @@ func SetupUserCommands(sess *discordgo.Session, appID string, guildID string, gc
 
 func EnableChannelCommands(sess *discordgo.Session, appID string, guildID string, chanID string, cmds []*discordgo.ApplicationCommand) error {
 	for _, cmd := range cmds {
-		oldPerm, err := sess.ApplicationCommandPermissions(appID, guildID, cmd.ID)
+		oldPerms, err := sess.ApplicationCommandPermissions(appID, guildID, cmd.ID)
 		if err != nil {
 			return err
 		}
-		newPerm := &discordgo.ApplicationCommandPermissionsList{
-			Permissions: append(oldPerm.Permissions, &discordgo.ApplicationCommandPermissions{
+		newPerms := &discordgo.ApplicationCommandPermissionsList{
+			Permissions: append(oldPerms.Permissions, &discordgo.ApplicationCommandPermissions{
 				ID:         chanID,
 				Type:       3,
 				Permission: true,
 			}),
 		}
-		err = sess.ApplicationCommandPermissionsEdit(appID, guildID, cmd.ID, newPerm)
+		err = sess.ApplicationCommandPermissionsEdit(appID, guildID, cmd.ID, newPerms)
 		if err != nil {
 			return err
 		}
