@@ -264,7 +264,9 @@ func (bot Backend) _updateSpinupOptions(cmd internal.BackendCmd, args internal.R
 	}
 
 	// spinup command options update
-	gameList = append(gameList, specName)
+	if !args.Overwrite {
+		gameList = append(gameList, specName)
+	}
 	spinupCmd.Options[0].Choices = make([]*discordgo.ApplicationCommandOptionChoice, len(gameList))
 	for idx, gameName := range gameList {
 		spinupCmd.Options[0].Choices[idx] = &discordgo.ApplicationCommandOptionChoice{
