@@ -166,7 +166,9 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 		return
 	}
 
-	if internal.Contains(gameList, spec.Name) && !args.Overwrite {
+	if !internal.Contains(gameList, spec.Name) {
+		gameList = append(gameList, spec.Name)
+	} else if !args.Overwrite {
 		fmt.Printf("Registerting %s: aborted, spec already exists\n", spec.Name)
 		bot.followUp(cmd, "🚫 Game %s already registered and overwrite=False", spec.Name)
 		return
@@ -264,9 +266,6 @@ func (bot Backend) _updateSpinupOptions(cmd internal.BackendCmd, args internal.R
 	}
 
 	// spinup command options update
-	if !args.Overwrite {
-		gameList = append(gameList, specName)
-	}
 	spinupCmd.Options[0].Choices = make([]*discordgo.ApplicationCommandOptionChoice, len(gameList))
 	for idx, gameName := range gameList {
 		spinupCmd.Options[0].Choices[idx] = &discordgo.ApplicationCommandOptionChoice{
