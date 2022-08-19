@@ -131,6 +131,12 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 	case internal.DestroyAPI:
 		bot.destroyServer(cmd)
 
+	case internal.InviteAPI:
+		bot.inviteMember(cmd)
+
+	case internal.KickAPI:
+		bot.kickMember(cmd)
+
 	default:
 		fmt.Printf("Unrecognized function %s\n", cmd.Action())
 	}
@@ -236,7 +242,7 @@ func (bot Backend) _getSpec(cmd internal.BackendCmd, args internal.RegisterGameA
 	// Parse spec
 	fmt.Printf("Registerting: parse spec\n")
 	if err = json.Unmarshal(jsonSpec, &spec); err != nil {
-		fmt.Errorf("Unmarshal failed: %s", err)
+		err = fmt.Errorf("Unmarshal failed: %s", err)
 		return
 	}
 
@@ -347,7 +353,7 @@ func (bot Backend) _getSpecAndIncreaseCount(cmd internal.BackendCmd, args intern
 		return
 	}
 	if spec.Name == "" {
-		err = fmt.Errorf("missing spec\n", args.GuildID, args.GameName)
+		err = fmt.Errorf("missing spec")
 		return
 	}
 
@@ -407,9 +413,10 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 		err = fmt.Errorf("ApplicationCommands failed: %s", err)
 		return
 	}
-	userCmd := internal.FilterCommandsByName(guildCmd, internal.UserCmd)
+	extendUserCmdFilter := append(internal.UserCmd, internal.InviteKickCmd...)
+	extendUserCmd := internal.FilterCommandsByName(guildCmd, extendUserCmdFilter)
 
-	err = internal.EnableChannelCommands(sessBearer, cmd.AppID, args.GuildID, channel.ID, userCmd)
+	err = internal.EnableChannelCommands(sessBearer, cmd.AppID, args.GuildID, channel.ID, extendUserCmd)
 	if err != nil {
 		err = fmt.Errorf("EnableChannelCommands failed: %s", err)
 		return
@@ -479,8 +486,8 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 		return
 	}
 	if gcCheck.GuildID != "" {
-		fmt.Println("Guild already have an entry in table")
-		bot.followUp(cmd, "🚫 Guild already have an entry in bootsrap table")
+		fmt.Println("Guild already have an entry in bootstrap table")
+		bot.followUp(cmd, "🚫 Guild already have an entry in bootstrap table")
 		return
 	}
 
@@ -493,7 +500,7 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 	}
 	fmt.Printf("Bootstraping %s: command creation\n", args.GuildID)
 	if err := internal.SetupLsdc2Commands(sess, cmd.AppID, args.GuildID); err != nil {
-		fmt.Println("SetupLsdc2Commands failed", err)
+		fmt.Printf("SetupLsdc2Commands failed: %s\n", err)
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -502,17 +509,17 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 		GuildID: args.GuildID,
 	}
 	if err := bot._createRoles(cmd, args, &gc); err != nil {
-		fmt.Println("_createRoles failed", err)
+		fmt.Printf("_createRoles failed: %s\n", err)
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 	if err := bot._createChannels(cmd, args, &gc); err != nil {
-		fmt.Println("_createChannels failed", err)
+		fmt.Printf("_createChannels failed: %s\n", err)
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 	if err := bot._setupPermissions(cmd, args, gc); err != nil {
-		fmt.Println("_createChannels failed", err)
+		fmt.Printf("_setupPermissions failed: %s\n", err)
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -520,11 +527,11 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 	// Register conf
 	fmt.Printf("Create %s: register instance\n", args.GuildID)
 	if err := internal.DynamodbPutItem(bot.GuildTable, gc); err != nil {
-		fmt.Println("DynamodbPutItem failed", err)
+		fmt.Printf("DynamodbPutItem failed: %s\n", err)
 		bot.followUp(cmd, "🚫 Internal error")
 	}
 
-	bot.followUp(cmd, "✅ Boostrap complete !")
+	bot.followUp(cmd, "✅ Bootstrap complete !")
 }
 
 func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.BootstrapArgs, gc *internal.GuildConf) error {
@@ -585,7 +592,7 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Bootst
 		return fmt.Errorf("GuildChannelCreateComplex failed: %s", err)
 	}
 	fmt.Printf("Bootstraping %s: welcome channel\n", args.GuildID)
-	_, err = sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
+	welcomeChan, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
 		Name:     "welcome",
 		Type:     discordgo.ChannelTypeGuildText,
 		ParentID: lsdc2Category.ID,
@@ -599,6 +606,7 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Bootst
 
 	gc.ChannelCategoryID = lsdc2Category.ID
 	gc.AdminChannelID = adminChan.ID
+	gc.WelcomeChannelID = welcomeChan.ID
 
 	return nil
 }
@@ -634,6 +642,137 @@ func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.Boot
 	}
 
 	return nil
+}
+
+//
+//  Invite/Kick command
+//
+
+func (bot Backend) inviteMember(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.InviteArgs)
+
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		fmt.Printf("discordgo.New failed: %s\n", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Retrieve requester membership
+	fmt.Println("Invite: retrieve requester member")
+	requester, err := sess.GuildMember(args.GuildID, args.RequesterID)
+	if err != nil {
+		fmt.Printf("GuildMember failed: %s\n", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Retrieve target membership
+	fmt.Println("Invite: retrieve target member")
+	target, err := sess.GuildMember(args.GuildID, args.TargetID)
+	if err != nil {
+		fmt.Printf("GuildMember failed: %s\n", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Retrieve LSDC2 Admin role from guild conf
+	fmt.Printf("Invite %s by %s: get guild conf\n", target.User.Username, requester.User.Username)
+	gc := internal.GuildConf{}
+	if err = internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gc); err != nil {
+		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Retrieve list of game channel
+	fmt.Printf("Invite %s by %s: get list of channel\n", target.User.Username, requester.User.Username)
+	serverChannelIDs, err := internal.DynamodbScanAttr(bot.InstanceTable, "key")
+	if err != nil {
+		fmt.Printf("DynamodbScanAttr failed: %s\n", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	if internal.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
+		fmt.Printf("Invite %s by %s: add member role\n", target.User.Username, requester.User.Username)
+		sess.GuildMemberRoleAdd(args.GuildID, args.TargetID, gc.UserRoleID)
+		bot.message(gc.WelcomeChannelID, ":call_me: Welcome %s !", target.User.Username)
+	} else if !internal.Contains(target.Roles, gc.UserRoleID) {
+		bot.followUp(cmd, "🚫 %s is not an allowed LSDC2 user", target.User.Username)
+		return
+	}
+	if internal.Contains(serverChannelIDs, args.ChannelID) {
+		fmt.Printf("Invite %s by %s: add member to channel\n", target.User.Username, requester.User.Username)
+		internal.AddUserView(sess, args.ChannelID, args.TargetID)
+	}
+
+	bot.followUp(cmd, "%s added !", target.User.Username)
+}
+
+func (bot Backend) kickMember(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.KickArgs)
+
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		fmt.Printf("discordgo.New failed: %s\n", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Retrieve requester membership
+	fmt.Printf("Kick: retrieve requester member")
+	requester, err := sess.GuildMember(args.GuildID, args.RequesterID)
+	if err != nil {
+		fmt.Printf("GuildMember failed: %s\n", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Retrieve target membership
+	fmt.Printf("Kick: retrieve target member")
+	target, err := sess.GuildMember(args.GuildID, args.TargetID)
+	if err != nil {
+		fmt.Printf("GuildMember failed: %s\n", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Retrieve LSDC2 Admin role from guild conf
+	fmt.Printf("Kick %s by %s: get guild conf", target.User.Username, requester.User.Username)
+	gc := internal.GuildConf{}
+	if err = internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gc); err != nil {
+		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Retrieve list of game channel
+	fmt.Printf("Invite %s by %s: get list of channel", target.User.Username, requester.User.Username)
+	serverChannelIDs, err := internal.DynamodbScanAttr(bot.InstanceTable, "key")
+	if err != nil {
+		fmt.Printf("DynamodbScanAttr failed: %s\n", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	if internal.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
+		if args.ChannelID == gc.AdminChannelID {
+			fmt.Printf("Kick %s by %s: remove member role", target.User.Username, requester.User.Username)
+			sess.GuildMemberRoleRemove(args.GuildID, args.TargetID, gc.UserRoleID)
+			for _, channelID := range serverChannelIDs {
+				internal.RemoveUserView(sess, channelID, args.TargetID)
+			}
+			bot.message(gc.WelcomeChannelID, ":middle_finger: in for face %s !", target.User.Username)
+		} else {
+			internal.RemoveUserView(sess, args.ChannelID, args.TargetID)
+		}
+	} else {
+		bot.followUp(cmd, "🚫 not allowed")
+		return
+	}
+
+	bot.followUp(cmd, "%s kicked !", target.User.Username)
 }
 
 //
