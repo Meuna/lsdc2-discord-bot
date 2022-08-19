@@ -8,9 +8,6 @@ lambda_list=$(aws lambda list-functions)
 frontend_lambda=$(echo $lambda_list | find_lambda "Lsdc2CdkStack-discordBotFrontend")
 backend_lambda=$(echo $lambda_list | find_lambda "Lsdc2CdkStack-discordBotBackend")
 
-zip --junk-paths build/frontend.zip build/frontend
-zip --junk-paths build/backend.zip build/backend
-
 aws lambda update-function-code \
     --function-name $frontend_lambda \
     --zip-file fileb://$(pwd)/build/frontend.zip \
