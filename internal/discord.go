@@ -13,7 +13,7 @@ import (
 )
 
 //
-// Contants
+// Constants
 //
 
 const (
@@ -21,6 +21,7 @@ const (
 	PermReadHistory        int64 = 0x0000000000010000
 	PermApplicationCommand int64 = 0x0000000080000000
 	PermCreateInvite       int64 = 0x0000000000000001
+	PermAdmin              int64 = 0x0000000000000008
 )
 
 func EveryoneRole(guildID string) string {
@@ -30,6 +31,15 @@ func EveryoneRole(guildID string) string {
 func AllChannel(guildID string) string {
 	allChan, _ := strconv.ParseInt(guildID, 10, 64)
 	return fmt.Sprintf("%d", allChan-1)
+}
+
+//
+// Member helpers
+//
+
+func IsAdmin(member *discordgo.Member) bool {
+	fmt.Printf("%b\n%b\n%b\n", member.Permissions, PermAdmin, (member.Permissions & PermAdmin))
+	return (member.Permissions & PermAdmin) > 0
 }
 
 //
@@ -66,6 +76,53 @@ func AppcmdOverwrite(roleID string) *discordgo.PermissionOverwrite {
 		Type:  discordgo.PermissionOverwriteTypeRole,
 		Allow: PermApplicationCommand | PermReadHistory,
 	}
+}
+
+func AddUserView(sess *discordgo.Session, channelID string, userID string) error {
+	channel, err := sess.Channel(channelID)
+	if err != nil {
+		return err
+	}
+	newPerms := append(
+		channel.PermissionOverwrites, &discordgo.PermissionOverwrite{
+			ID:    userID,
+			Type:  discordgo.PermissionOverwriteTypeMember,
+			Allow: PermViewChannel,
+		},
+	)
+	_, err = sess.ChannelEditComplex(channelID, &discordgo.ChannelEdit{
+		PermissionOverwrites: newPerms,
+		Position:             channel.Position,
+	})
+
+	return err
+}
+
+func RemoveUserView(sess *discordgo.Session, channelID string, userID string) error {
+	channel, err := sess.Channel(channelID)
+	if err != nil {
+		return err
+	}
+	userFound := false
+	var userPermIdx int
+	for idx, perm := range channel.PermissionOverwrites {
+		if perm.ID == userID {
+			userFound = true
+			userPermIdx = idx
+		}
+	}
+
+	if userFound {
+		newPerms := channel.PermissionOverwrites
+		newPerms[userPermIdx] = newPerms[len(newPerms)-1]
+		newPerms = newPerms[:len(newPerms)-1]
+		_, err = sess.ChannelEditComplex(channelID, &discordgo.ChannelEdit{
+			PermissionOverwrites: newPerms,
+			Position:             channel.Position,
+		})
+	}
+
+	return err
 }
 
 //
@@ -207,6 +264,15 @@ func SetupAdminCommands(sess *discordgo.Session, appID string, guildID string, g
 				},
 			},
 		}
+		if cmd.Name == InviteAPI {
+			perm.Permissions = append(perm.Permissions,
+				&discordgo.ApplicationCommandPermissions{
+					ID:         gc.UserRoleID,
+					Type:       1,
+					Permission: true,
+				},
+			)
+		}
 		err := sess.ApplicationCommandPermissionsEdit(appID, guildID, cmd.ID, perm)
 		if err != nil {
 			return err
@@ -278,13 +344,36 @@ var lsdc2Commands = []*discordgo.ApplicationCommand{
 	{
 		Name:        DestroyAPI,
 		Description: "Destroy a server",
-		// DefaultMemberPermissions: &discordgo.PermissionManageServer,
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Name:        "server-name",
 				Description: "The name of the server to destroy",
 				Required:    true,
 				Type:        discordgo.ApplicationCommandOptionString,
+			},
+		},
+	},
+	{
+		Name:        InviteAPI,
+		Description: "Invite a user to LSDC2 Role and/or server",
+		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Name:        "member",
+				Description: "The member invited",
+				Required:    true,
+				Type:        discordgo.ApplicationCommandOptionUser,
+			},
+		},
+	},
+	{
+		Name:        KickAPI,
+		Description: "Kick a user from an LSDC2 Role and/or server",
+		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Name:        "member",
+				Description: "The member removed",
+				Required:    true,
+				Type:        discordgo.ApplicationCommandOptionUser,
 			},
 		},
 	},

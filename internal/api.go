@@ -12,6 +12,8 @@ const (
 	BootstrapAPI    = "bootstrap"
 	SpinupAPI       = "spinup"
 	DestroyAPI      = "destroy"
+	InviteAPI       = "invite"
+	KickAPI         = "kick"
 	StartAPI        = "start"
 	StopAPI         = "stop"
 	StatusAPI       = "status"
@@ -20,9 +22,10 @@ const (
 )
 
 var (
-	OwnerCmd = []string{RegisterGameAPI, BootstrapAPI}
-	AdminCmd = []string{SpinupAPI, DestroyAPI}
-	UserCmd  = []string{StartAPI, StopAPI, StatusAPI, DownloadAPI, UploadAPI}
+	OwnerCmd      = []string{RegisterGameAPI, BootstrapAPI}
+	AdminCmd      = []string{SpinupAPI, DestroyAPI, InviteAPI, KickAPI}
+	InviteKickCmd = []string{InviteAPI, KickAPI}
+	UserCmd       = []string{StartAPI, StopAPI, StatusAPI, DownloadAPI, UploadAPI}
 )
 
 const (
@@ -46,6 +49,10 @@ func (cmd BackendCmd) Action() string {
 		return SpinupAPI
 	case *DestroyArgs, DestroyArgs:
 		return DestroyAPI
+	case *InviteArgs, InviteArgs:
+		return InviteAPI
+	case *KickArgs, KickArgs:
+		return KickAPI
 	default:
 		panic(fmt.Sprintf("Incompatible BackendCmd Args type %T", cmd.Args))
 	}
@@ -74,6 +81,10 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 		cmd.Args = &SpinupArgs{}
 	case DestroyAPI:
 		cmd.Args = &DestroyArgs{}
+	case InviteAPI:
+		cmd.Args = &InviteArgs{}
+	case KickAPI:
+		cmd.Args = &KickArgs{}
 	default:
 		return fmt.Errorf("unknown command: %s", tmp.Action)
 	}
@@ -110,6 +121,22 @@ type SpinupArgs struct {
 
 type DestroyArgs struct {
 	ChannelID string
+}
+
+type InviteArgs struct {
+	GuildID          string
+	ChannelID        string
+	RequesterID      string
+	TargetID         string
+	RequesterIsAdmin bool
+}
+
+type KickArgs struct {
+	GuildID          string
+	ChannelID        string
+	RequesterID      string
+	TargetID         string
+	RequesterIsAdmin bool
 }
 
 func QueueMarshalledAction(queueUrl string, cmd BackendCmd) error {

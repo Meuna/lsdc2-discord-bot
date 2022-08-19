@@ -149,6 +149,7 @@ type GuildConf struct {
 	GuildID           string `json:"key"`
 	ChannelCategoryID string `json:"channelCategory"`
 	AdminChannelID    string `json:"adminChannel"`
+	WelcomeChannelID  string `json:"welcomeChannel"`
 	AdminRoleID       string `json:"adminRole"`
 	UserRoleID        string `json:"userRole"`
 }
