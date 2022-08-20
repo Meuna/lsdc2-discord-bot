@@ -3,24 +3,21 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	_ "embed"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"lsdc2/discordbot/internal"
+	"net/url"
+	"strconv"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/bwmarrin/discordgo"
 )
-
-func error401() events.APIGatewayProxyResponse {
-	return events.APIGatewayProxyResponse{StatusCode: 401}
-}
-
-func error500() events.APIGatewayProxyResponse {
-	return events.APIGatewayProxyResponse{StatusCode: 500}
-}
 
 func main() {
 	ctx := context.Background()
@@ -32,19 +29,140 @@ func main() {
 func handleRequest(ctx context.Context, request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
 	bot := ctx.Value("bot").(Frontend)
 
-	if !bot.checkSignature(request) {
-		return error401(), errors.New("signature check failed")
+	if request.RawPath == "/" {
+		return bot.discordRoute(request)
+	} else if request.RawPath == "/upload" {
+		return bot.uploadRoute(request)
+	} else {
+		return bot.error404(), nil
+	}
+}
+
+func InitFrondend() Frontend {
+	bot, err := internal.ParseEnv()
+	if err != nil {
+		panic(err)
+	}
+	return Frontend{bot}
+}
+
+type Frontend struct {
+	internal.BotEnv
+}
+
+func (bot Frontend) json200(msg string) events.APIGatewayProxyResponse {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 200,
+		Body:       msg,
+		Headers: map[string]string{
+			"content-type": "application/json",
+		},
+	}
+}
+
+func (bot Frontend) html200(msg string) events.APIGatewayProxyResponse {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 200,
+		Body:       msg,
+		Headers: map[string]string{
+			"content-type": "text/html",
+		},
+	}
+}
+
+func (bot Frontend) error401(msg string) events.APIGatewayProxyResponse {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 401,
+		Body:       msg,
+		Headers: map[string]string{
+			"content-type": "text/html",
+		},
+	}
+}
+
+func (bot Frontend) error404() events.APIGatewayProxyResponse {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 404,
+		Body:       "404: content not found",
+		Headers: map[string]string{
+			"content-type": "text/html",
+		},
+	}
+}
+
+func (bot Frontend) error500() events.APIGatewayProxyResponse {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 500,
+		Body:       "500: content not found",
+		Headers: map[string]string{
+			"content-type": "text/html",
+		},
+	}
+}
+
+//
+//	Upload route
+//
+
+//go:embed upload.html
+var uploadPage string
+
+func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
+	key := []byte(bot.ClientSecret)
+	channelID, ok := request.QueryStringParameters["channelID"]
+	missingKeys := []string{}
+	if !ok {
+		missingKeys = append(missingKeys, "channelID")
+	}
+	eolStr, ok := request.QueryStringParameters["eol"]
+	if !ok {
+		missingKeys = append(missingKeys, "eol")
+	}
+	macStr, ok := request.QueryStringParameters["mac"]
+	if !ok {
+		missingKeys = append(missingKeys, "mac")
+	}
+	if len(missingKeys) > 0 {
+		return bot.error500(), fmt.Errorf("missing keys: %s", missingKeys)
+	}
+
+	eol, err := strconv.ParseInt(eolStr, 10, 64)
+	if err != nil {
+		return bot.error500(), fmt.Errorf("ParseInt failed: %s", err)
+	}
+	mac, err := base64.RawURLEncoding.DecodeString(macStr)
+	if err != nil {
+		return bot.error500(), fmt.Errorf("RawURLEncoding failed: %s", err)
+	}
+
+	if !internal.VerifyMacWithTTL(key, []byte(channelID), eol, mac) {
+		return bot.error401("401: MAC verification failed"), nil
+	}
+	if time.Now().Unix() > eol {
+		return bot.error401("401: MAC expired"), nil
+	}
+
+	return bot.html200(uploadPage), nil
+}
+
+//
+//	Discord route
+//
+
+func (bot Frontend) discordRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
+	if !bot.checkDiscordSignature(request) {
+		return bot.error401(""), errors.New("signature check failed")
 	}
 
 	var itn discordgo.Interaction
 	if err := itn.UnmarshalJSON([]byte(request.Body)); err != nil {
-		return error500(), err
+		return bot.error500(), fmt.Errorf("UnmarshalJSON failed: %s", err)
 	}
 
 	switch itn.Type {
 	case discordgo.InteractionPing:
 		fmt.Println("Received PING interaction")
-		return events.APIGatewayProxyResponse{Body: `{"type": 1}`, StatusCode: 200}, nil
+		return bot.json200(`{"type": 1}`), nil
 
 	case discordgo.InteractionApplicationCommand:
 		fmt.Println("Received application command interaction")
@@ -63,23 +181,11 @@ func handleRequest(ctx context.Context, request events.LambdaFunctionURLRequest)
 		return bot.routeModalSubmit(itn)
 
 	default:
-		return error500(), fmt.Errorf("Unknown interaction type %v", itn.Type)
+		return bot.error500(), fmt.Errorf("Unknown interaction type %v", itn.Type)
 	}
 }
 
-func InitFrondend() Frontend {
-	bot, err := internal.ParseEnv()
-	if err != nil {
-		panic(err)
-	}
-	return Frontend{bot}
-}
-
-type Frontend struct {
-	internal.BotEnv
-}
-
-func (bot Frontend) checkSignature(request events.LambdaFunctionURLRequest) bool {
+func (bot Frontend) checkDiscordSignature(request events.LambdaFunctionURLRequest) bool {
 	pkey, _ := hex.DecodeString(bot.Pkey)
 	sig, _ := hex.DecodeString(request.Headers["x-signature-ed25519"])
 	pl := []byte(request.Headers["x-signature-timestamp"] + request.Body)
@@ -102,10 +208,9 @@ func (bot Frontend) ackMessage() (events.APIGatewayProxyResponse, error) {
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		fmt.Println(err)
-		return error500(), err
+		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
 	}
-	return events.APIGatewayProxyResponse{Body: string(jsonBytes[:]), StatusCode: 200}, nil
+	return bot.json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) ackComponent() (events.APIGatewayProxyResponse, error) {
@@ -114,10 +219,9 @@ func (bot Frontend) ackComponent() (events.APIGatewayProxyResponse, error) {
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		fmt.Println(err)
-		return error500(), err
+		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
 	}
-	return events.APIGatewayProxyResponse{Body: string(jsonBytes[:]), StatusCode: 200}, nil
+	return bot.json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) reply(msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
@@ -129,10 +233,34 @@ func (bot Frontend) reply(msg string, fmtarg ...interface{}) (events.APIGatewayP
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		fmt.Println(err)
-		return error500(), err
+		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
 	}
-	return events.APIGatewayProxyResponse{Body: string(jsonBytes[:]), StatusCode: 200}, nil
+	return bot.json200(string(jsonBytes[:])), nil
+}
+
+func (bot Frontend) replyLink(url string, label string, msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
+	itnResp := discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: fmt.Sprintf(msg, fmtarg...),
+			Components: []discordgo.MessageComponent{
+				discordgo.ActionsRow{
+					Components: []discordgo.MessageComponent{
+						discordgo.Button{
+							Label: label,
+							Style: discordgo.LinkButton,
+							URL:   url,
+						},
+					},
+				},
+			},
+		},
+	}
+	jsonBytes, err := json.Marshal(itnResp)
+	if err != nil {
+		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
+	}
+	return bot.json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) confirm(itnSrc discordgo.Interaction, cmd internal.BackendCmd, msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
@@ -167,10 +295,9 @@ func (bot Frontend) confirm(itnSrc discordgo.Interaction, cmd internal.BackendCm
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		fmt.Println(err)
-		return error500(), err
+		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
 	}
-	return events.APIGatewayProxyResponse{Body: string(jsonBytes[:]), StatusCode: 200}, nil
+	return bot.json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[string]string) (events.APIGatewayProxyResponse, error) {
@@ -207,10 +334,9 @@ func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[s
 
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		fmt.Println(err)
-		return error500(), err
+		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
 	}
-	return events.APIGatewayProxyResponse{Body: string(jsonBytes[:]), StatusCode: 200}, nil
+	return bot.json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label string) (events.APIGatewayProxyResponse, error) {
@@ -242,10 +368,9 @@ func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label stri
 
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		fmt.Println(err)
-		return error500(), err
+		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
 	}
-	return events.APIGatewayProxyResponse{Body: string(jsonBytes[:]), StatusCode: 200}, nil
+	return bot.json200(string(jsonBytes[:])), nil
 }
 
 //
@@ -680,5 +805,33 @@ func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyRe
 }
 
 func (bot Frontend) savegameUpload(channelID string) (events.APIGatewayProxyResponse, error) {
-	return bot.reply("🚫 Not implemented yet")
+	// Check that we are in a server channel
+	inst := internal.ServerInstance{}
+	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	if err != nil {
+		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		return bot.reply("🚫 Internal error")
+	}
+	if inst.SpecName == "" {
+		return bot.reply("🚫 Internal error. Are you in a server channel ?")
+	}
+
+	// And generate a signed url back to the bot
+	key := []byte(bot.ClientSecret)
+	msg := []byte(channelID)
+	ttl := 30
+	mac, eol := internal.GenMacWithTTL(key, msg, ttl)
+
+	values := url.Values{}
+	values.Add("mac", base64.RawURLEncoding.EncodeToString(mac))
+	values.Add("eol", fmt.Sprint(eol))
+	values.Add("channelID", channelID)
+
+	url := url.URL{
+		Scheme:   "https",
+		Host:     "krbcuodbyr7qljkz6y2dsiun2q0igotx.lambda-url.eu-west-3.on.aws",
+		Path:     "upload",
+		RawQuery: values.Encode(),
+	}
+	return bot.replyLink(url.String(), "Open upload page", "test")
 }
