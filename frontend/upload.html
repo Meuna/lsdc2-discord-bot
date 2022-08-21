@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Upload file to S3</title>
+    <style type="text/css">
+        body {
+            background: #20262E;
+            font-family: system-ui, sans-serif;
+            display: flex;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            color: white;
+        }
+
+        /* Credits: https://codepen.io/eeeps/pen/YzNNZqo */
+        h1 {
+            font-size: 60px;
+            font-weight: 900;
+            color: tomato;
+
+            --x-offset: -0.0625em;
+            --y-offset: 0.0625em;
+            --stroke: 0.025em;
+            --background-color: white;
+            --stroke-color: lightblue;
+
+            text-shadow:
+                var(--x-offset) var(--y-offset) 0px var(--background-color),
+                calc(var(--x-offset) - var(--stroke)) calc(var(--y-offset) + var(--stroke)) 0px var(--stroke-color);
+
+        }
+
+        @supports (text-shadow: 1px 1px 1px 1px black) {
+            h1 {
+                text-shadow:
+                    var(--x-offset) var(--y-offset) 0px 0px var(--background-color),
+                    var(--x-offset) var(--y-offset) var(--stroke) 0px var(--stroke-color);
+            }
+        }
+
+        .container {
+            width: 480px;
+            margin: 50px auto;
+            padding: 20px;
+            min-height: 200px;
+        }
+
+        #drop-area {
+            border: 2px dashed #ccc;
+            border-radius: 20px;
+            width: 480px;
+            margin: 20px auto;
+            padding: 20px;
+            min-height: 200px;
+        }
+
+        #drop-area.highlight {
+            background-color: #2c343f;
+            border-color: tomato;
+        }
+
+        .button {
+            color: black;
+            display: inline-block;
+            padding: 10px;
+            background: #ccc;
+            cursor: pointer;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+
+        .button:hover {
+            background: #aaa;
+        }
+
+        #fileElem {
+            display: none;
+        }
+
+        .shimmyshake {
+            animation: kf_shake 0.4s 1 linear;
+            -webkit-animation: kf_shake 0.4s 1 linear;
+            -moz-animation: kf_shake 0.4s 1 linear;
+            -o-animation: kf_shake 0.4s 1 linear;
+        }
+
+        @keyframes kf_shake {
+            0% {
+                transform: translate(30px);
+            }
+
+            20% {
+                transform: translate(-30px);
+            }
+
+            40% {
+                transform: translate(15px);
+            }
+
+            60% {
+                transform: translate(-15px);
+            }
+
+            80% {
+                transform: translate(8px);
+            }
+
+            100% {
+                transform: translate(0px);
+            }
+        }
+
+        @-webkit-keyframes kf_shake {
+            0% {
+                -webkit-transform: translate(30px);
+            }
+
+            20% {
+                -webkit-transform: translate(-30px);
+            }
+
+            40% {
+                -webkit-transform: translate(15px);
+            }
+
+            60% {
+                -webkit-transform: translate(-15px);
+            }
+
+            80% {
+                -webkit-transform: translate(8px);
+            }
+
+            100% {
+                -webkit-transform: translate(0px);
+            }
+        }
+
+        @-moz-keyframes kf_shake {
+            0% {
+                -moz-transform: translate(30px);
+            }
+
+            20% {
+                -moz-transform: translate(-30px);
+            }
+
+            40% {
+                -moz-transform: translate(15px);
+            }
+
+            60% {
+                -moz-transform: translate(-15px);
+            }
+
+            80% {
+                -moz-transform: translate(8px);
+            }
+
+            100% {
+                -moz-transform: translate(0px);
+            }
+        }
+
+        @-o-keyframes kf_shake {
+            0% {
+                -o-transform: translate(30px);
+            }
+
+            20% {
+                -o-transform: translate(-30px);
+            }
+
+            40% {
+                -o-transform: translate(15px);
+            }
+
+            60% {
+                -o-transform: translate(-15px);
+            }
+
+            80% {
+                -o-transform: translate(8px);
+            }
+
+            100% {
+                -o-origin-transform: translate(0px);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div>
+        <h1>LSDC2 savegame uploader !</h1>
+        <div class="container">
+            <h2>Server name: <i>{{serverName}}</i></h2>
+            <div id="drop-area">
+                <input type="file" id="fileElem" onchange="handleFile(this.files[0])">
+                <label class="button" for="fileElem">Select a file</label>
+                <p>Or drop your archived savegame here.</p>
+            </div>
+            <h2 id="success-msg" style="display: none;"></h2>
+            <h2 id="error-msg" style="display: none; color: tomato;"></h2>
+        </div>
+    </div>
+    <script>
+        // Credits: https://codepen.io/joezimjs/pen/yPWQbd
+
+        let uploadUrl = "{{presignedUrl}}"
+        let dropArea = document.getElementById("drop-area");
+        let successMsg = document.getElementById("success-msg");
+        let errorMsg = document.getElementById("error-msg");
+
+        // Feedback functions
+        function showSuccess(msg) {
+            successMsg.textContent = msg
+            successMsg.style.display = "block"
+            errorMsg.style.display = "none"
+        }
+        function showError(msg) {
+            errorMsg.textContent = msg
+            errorMsg.style.display = "block"
+            successMsg.style.display = "none"
+        }
+        function dropAreaShake() {
+            dropArea.classList.add('shimmyshake');
+        }
+        ['webkitAnimationEnd', 'oanimationend', 'msAnimationEnd', 'animationend'].forEach(eventName => {
+            dropArea.addEventListener(eventName, e => dropArea.classList.remove('shimmyshake'), false)
+        });
+
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, preventDefaults, false)
+            document.body.addEventListener(eventName, preventDefaults, false)
+        });
+        function preventDefaults(e) {
+            e.preventDefault()
+            e.stopPropagation()
+        }
+
+        // Highlight drop area when item is dragged over it
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropArea.addEventListener(eventName, highlight, false)
+        });
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, unhighlight, false)
+        });
+        function highlight(e) {
+            dropArea.classList.add('highlight')
+        }
+        function unhighlight(e) {
+            dropArea.classList.remove('highlight')
+        }
+
+        // Handle dropped files
+        dropArea.addEventListener('drop', handleDrop, false)
+        function handleDrop(e) {
+            var files = e.dataTransfer.files
+            if (files.length > 1) {
+                dropAreaShake()
+                showError("Drop only one file")
+                return
+            }
+            handleFile(files[0])
+        }
+
+        function handleFile(file) {
+            let reader = new FileReader()
+            let content
+            reader.onload = (e) => {
+                uploadContent(e.target.result)
+            }
+            reader.readAsDataURL(file)
+        }
+
+        async function uploadContent(content) {
+            let binary = atob(content.split(',')[1])
+            let array = []
+            for (var i = 0; i < binary.length; i++) {
+                array.push(binary.charCodeAt(i))
+            }
+            let blobData = new Blob([new Uint8Array(array)], { type: 'application/octet-stream' })
+            fetch(uploadUrl, {
+                method: 'PUT',
+                body: blobData
+            }).then(response => {
+                if (!response.ok) {
+                    throw Error(response.statusText);
+                }
+                showSuccess("Success !")
+            }
+            ).catch(error => {
+                showError("Upload to bucket failed :(")
+            })
+        }
+    </script>
+</body>
+
+</html>

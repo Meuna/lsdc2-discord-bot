@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ecs"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/sqs"
 	"github.com/aws/aws-sdk-go/service/ssm"
 )
@@ -471,4 +472,46 @@ func GetTaskIP(task *ecs.Task, stack Lsdc2Stack) (string, error) {
 	}
 
 	return *resultDni.NetworkInterfaces[0].Association.PublicIp, nil
+}
+
+//
+// S3 helpers
+//
+
+func PresignGetS3Object(bucket string, key string, expire time.Duration) (string, error) {
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+	svc := s3.New(sess)
+
+	input := &s3.GetObjectInput{
+		Bucket:              aws.String(bucket),
+		Key:                 aws.String(key),
+		ResponseContentType: aws.String("application/octet-stream"),
+	}
+	req, _ := svc.GetObjectRequest(input)
+	url, err := req.Presign(expire)
+	if err != nil {
+		return "", nil
+	}
+	return url, nil
+}
+
+func PresignPutS3Object(bucket string, key string, expire time.Duration) (string, error) {
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+	svc := s3.New(sess)
+
+	input := &s3.PutObjectInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String("application/octet-stream"),
+	}
+	req, _ := svc.PutObjectRequest(input)
+	url, err := req.Presign(expire)
+	if err != nil {
+		return "", nil
+	}
+	return url, nil
 }

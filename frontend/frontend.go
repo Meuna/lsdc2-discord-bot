@@ -12,6 +12,7 @@ import (
 	"lsdc2/discordbot/internal"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -109,8 +110,45 @@ var uploadPage string
 
 func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
 	key := []byte(bot.ClientSecret)
-	channelID, ok := request.QueryStringParameters["channelID"]
+	serverName, channelID, mac, eol, err := bot._parseQuery(request)
+
+	// Verify MAC and TTL
+	if !internal.VerifyMacWithTTL(key, []byte(channelID), eol, mac) {
+		return bot.error401("401: MAC verification failed"), nil
+	}
+	if time.Now().Unix() > eol {
+		return bot.error401("401: MAC expired"), nil
+	}
+
+	// Retrieve instance
+	inst := internal.ServerInstance{}
+	err = internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	if err != nil {
+		return bot.error500(), fmt.Errorf("DynamodbGetItem failed: %s", err)
+	}
+	if inst.SpecName == "" {
+		return bot.error500(), fmt.Errorf("Instance %s not found", channelID)
+	}
+
+	// Presign S3 PUT
+	url, err := internal.PresignPutS3Object(bot.SaveGameBucket, inst.Name, time.Minute)
+	if err != nil {
+		return bot.error500(), fmt.Errorf("PresignGetS3Object failed: %s", err)
+	}
+
+	r := strings.NewReplacer("{{serverName}}", serverName, "{{presignedUrl}}", url)
+	uploadPageWithPutUrl := r.Replace(uploadPage)
+
+	return bot.html200(uploadPageWithPutUrl), nil
+}
+
+func (bot Frontend) _parseQuery(request events.LambdaFunctionURLRequest) (serverName string, channelID string, mac []byte, eol int64, err error) {
 	missingKeys := []string{}
+	serverName, ok := request.QueryStringParameters["serverName"]
+	if !ok {
+		missingKeys = append(missingKeys, "serverName")
+	}
+	channelID, ok = request.QueryStringParameters["channelID"]
 	if !ok {
 		missingKeys = append(missingKeys, "channelID")
 	}
@@ -123,26 +161,17 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 		missingKeys = append(missingKeys, "mac")
 	}
 	if len(missingKeys) > 0 {
-		return bot.error500(), fmt.Errorf("missing keys: %s", missingKeys)
+		err = fmt.Errorf("missing keys: %s", missingKeys)
+		return
 	}
 
-	eol, err := strconv.ParseInt(eolStr, 10, 64)
+	eol, err = strconv.ParseInt(eolStr, 10, 64)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("ParseInt failed: %s", err)
+		return
 	}
-	mac, err := base64.RawURLEncoding.DecodeString(macStr)
-	if err != nil {
-		return bot.error500(), fmt.Errorf("RawURLEncoding failed: %s", err)
-	}
+	mac, err = base64.RawURLEncoding.DecodeString(macStr)
 
-	if !internal.VerifyMacWithTTL(key, []byte(channelID), eol, mac) {
-		return bot.error401("401: MAC verification failed"), nil
-	}
-	if time.Now().Unix() > eol {
-		return bot.error401("401: MAC expired"), nil
-	}
-
-	return bot.html200(uploadPage), nil
+	return
 }
 
 //
@@ -801,7 +830,23 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 }
 
 func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyResponse, error) {
-	return bot.reply("🚫 Not implemented yet")
+	// Check that we are in a server channel
+	inst := internal.ServerInstance{}
+	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	if err != nil {
+		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		return bot.reply("🚫 Internal error")
+	}
+	if inst.SpecName == "" {
+		return bot.reply("🚫 Internal error. Are you in a server channel ?")
+	}
+
+	url, err := internal.PresignGetS3Object(bot.SaveGameBucket, inst.Name, time.Minute)
+	if err != nil {
+		fmt.Printf("PresignGetS3Object failed: %s\n", err)
+		return bot.reply("🚫 Internal error")
+	}
+	return bot.reply("Link to %s savegame: [Download](%s)", inst.Name, url)
 }
 
 func (bot Frontend) savegameUpload(channelID string) (events.APIGatewayProxyResponse, error) {
@@ -826,6 +871,7 @@ func (bot Frontend) savegameUpload(channelID string) (events.APIGatewayProxyResp
 	values.Add("mac", base64.RawURLEncoding.EncodeToString(mac))
 	values.Add("eol", fmt.Sprint(eol))
 	values.Add("channelID", channelID)
+	values.Add("serverName", inst.Name)
 
 	url := url.URL{
 		Scheme:   "https",
@@ -833,5 +879,5 @@ func (bot Frontend) savegameUpload(channelID string) (events.APIGatewayProxyResp
 		Path:     "upload",
 		RawQuery: values.Encode(),
 	}
-	return bot.replyLink(url.String(), "Open upload page", "test")
+	return bot.replyLink(url.String(), "Open upload page", "%s savegame", inst.Name)
 }
