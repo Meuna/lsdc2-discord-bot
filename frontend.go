@@ -105,7 +105,7 @@ func (bot Frontend) error500() events.APIGatewayProxyResponse {
 //	Upload route
 //
 
-//go:embed upload.html
+//go:embed static/upload.html
 var uploadPage string
 
 func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
