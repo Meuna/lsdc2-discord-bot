@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+func Pointer[T any](d T) *T {
+	return &d
+}
+
 func Contains(s []string, str string) bool {
 	for _, v := range s {
 		if v == str {

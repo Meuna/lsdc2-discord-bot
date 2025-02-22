@@ -24,7 +24,7 @@ func main() {
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, "bot", InitFrondend())
 
-	lambda.StartWithContext(ctx, handleRequest)
+	lambda.StartWithOptions(handleRequest, lambda.WithContext(ctx))
 }
 
 func handleRequest(ctx context.Context, request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
@@ -111,6 +111,9 @@ var uploadPage string
 func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
 	key := []byte(bot.ClientSecret)
 	serverName, channelID, mac, eol, err := bot._parseQuery(request)
+	if err != nil {
+		return bot.error500(), fmt.Errorf("_parseQuery failed: %s", err)
+	}
 
 	// Verify MAC and TTL
 	if !internal.VerifyMacWithTTL(key, []byte(channelID), eol, mac) {
@@ -127,7 +130,7 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 		return bot.error500(), fmt.Errorf("DynamodbGetItem failed: %s", err)
 	}
 	if inst.SpecName == "" {
-		return bot.error500(), fmt.Errorf("Instance %s not found", channelID)
+		return bot.error500(), fmt.Errorf("instance %s not found", channelID)
 	}
 
 	// Presign S3 PUT
@@ -210,7 +213,7 @@ func (bot Frontend) discordRoute(request events.LambdaFunctionURLRequest) (event
 		return bot.routeModalSubmit(itn)
 
 	default:
-		return bot.error500(), fmt.Errorf("Unknown interaction type %v", itn.Type)
+		return bot.error500(), fmt.Errorf("unknown interaction type %v", itn.Type)
 	}
 }
 
@@ -237,7 +240,7 @@ func (bot Frontend) ackMessage() (events.APIGatewayProxyResponse, error) {
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
+		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
 	}
 	return bot.json200(string(jsonBytes[:])), nil
 }
@@ -248,7 +251,7 @@ func (bot Frontend) ackComponent() (events.APIGatewayProxyResponse, error) {
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
+		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
 	}
 	return bot.json200(string(jsonBytes[:])), nil
 }
@@ -262,7 +265,7 @@ func (bot Frontend) reply(msg string, fmtarg ...interface{}) (events.APIGatewayP
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
+		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
 	}
 	return bot.json200(string(jsonBytes[:])), nil
 }
@@ -287,7 +290,7 @@ func (bot Frontend) replyLink(url string, label string, msg string, fmtarg ...in
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
+		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
 	}
 	return bot.json200(string(jsonBytes[:])), nil
 }
@@ -324,7 +327,7 @@ func (bot Frontend) confirm(itnSrc discordgo.Interaction, cmd internal.BackendCm
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
+		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
 	}
 	return bot.json200(string(jsonBytes[:])), nil
 }
@@ -363,7 +366,7 @@ func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[s
 
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
+		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
 	}
 	return bot.json200(string(jsonBytes[:])), nil
 }
@@ -397,7 +400,7 @@ func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label stri
 
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("Marshal failed: %s", err)
+		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
 	}
 	return bot.json200(string(jsonBytes[:])), nil
 }
