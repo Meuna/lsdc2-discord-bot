@@ -90,9 +90,9 @@ func AddUserView(sess *discordgo.Session, channelID string, userID string) error
 			Allow: PermViewChannel,
 		},
 	)
-	_, err = sess.ChannelEditComplex(channelID, &discordgo.ChannelEdit{
+	_, err = sess.ChannelEdit(channelID, &discordgo.ChannelEdit{
 		PermissionOverwrites: newPerms,
-		Position:             channel.Position,
+		Position:             &channel.Position,
 	})
 
 	return err
@@ -116,9 +116,9 @@ func RemoveUserView(sess *discordgo.Session, channelID string, userID string) er
 		newPerms := channel.PermissionOverwrites
 		newPerms[userPermIdx] = newPerms[len(newPerms)-1]
 		newPerms = newPerms[:len(newPerms)-1]
-		_, err = sess.ChannelEditComplex(channelID, &discordgo.ChannelEdit{
+		_, err = sess.ChannelEdit(channelID, &discordgo.ChannelEdit{
 			PermissionOverwrites: newPerms,
-			Position:             channel.Position,
+			Position:             &channel.Position,
 		})
 	}
 

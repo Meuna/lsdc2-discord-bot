@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"lsdc2/discordbot/internal"
 	"net/http"
 
@@ -18,7 +18,7 @@ func main() {
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, "bot", InitBackend())
 
-	lambda.StartWithContext(ctx, handleEvent)
+	lambda.StartWithOptions(handleEvent, lambda.WithContext(ctx))
 }
 
 type Event struct {
@@ -105,7 +105,7 @@ func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...inter
 		Token: cmd.Token,
 	}
 	_, err = sess.InteractionResponseEdit(&itn, &discordgo.WebhookEdit{
-		Content: fmt.Sprintf(msg, fmtarg...),
+		Content: internal.Pointer(fmt.Sprintf(msg, fmtarg...)),
 	})
 	if err != nil {
 		fmt.Println("InteractionResponseEdit failed", err)
@@ -226,7 +226,7 @@ func (bot Backend) _getSpec(cmd internal.BackendCmd, args internal.RegisterGameA
 		}
 		defer resp.Body.Close()
 
-		jsonSpec, err = ioutil.ReadAll(resp.Body)
+		jsonSpec, err = io.ReadAll(resp.Body)
 		if err != nil {
 			err = fmt.Errorf("http.Get failed: %s", err)
 			return
@@ -235,14 +235,14 @@ func (bot Backend) _getSpec(cmd internal.BackendCmd, args internal.RegisterGameA
 		// Spec is in args.Spec
 		jsonSpec = []byte(args.Spec)
 	} else {
-		err = fmt.Errorf("Both spec inputs are empty")
+		err = fmt.Errorf("both spec inputs are empty")
 		return
 	}
 
 	// Parse spec
 	fmt.Printf("Registerting: parse spec\n")
 	if err = json.Unmarshal(jsonSpec, &spec); err != nil {
-		err = fmt.Errorf("Unmarshal failed: %s", err)
+		err = fmt.Errorf("unmarshal failed: %s", err)
 		return
 	}
 
@@ -253,7 +253,7 @@ func (bot Backend) _updateSpinupOptions(cmd internal.BackendCmd, args internal.R
 	// Retrieve spinup command
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		return fmt.Errorf("discordgo.New failed", err)
+		return fmt.Errorf("discordgo.New failed: %s", err)
 	}
 	fmt.Printf("Registerting %s: lookup spinup command\n", specName)
 	globalCmd, err := sess.ApplicationCommands(cmd.AppID, "")
@@ -281,7 +281,7 @@ func (bot Backend) _updateSpinupOptions(cmd internal.BackendCmd, args internal.R
 	}
 	_, err = sess.ApplicationCommandEdit(cmd.AppID, "", spinupCmd.ID, spinupCmd)
 	if err != nil {
-		return fmt.Errorf("ApplicationCommandEdit failed", err)
+		return fmt.Errorf("applicationCommandEdit failed: %s", err)
 	}
 
 	return nil
@@ -541,21 +541,23 @@ func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.Bootstrap
 	}
 
 	fmt.Printf("Bootstraping %s: LSDC2 roles\n", args.GuildID)
-	adminRole, err := sess.GuildRoleCreate(args.GuildID)
+	adminRole, err := sess.GuildRoleCreate(args.GuildID, &discordgo.RoleParams{
+		Name:        "LSDC2 Admin",
+		Color:       internal.Pointer(0x8833ff),
+		Hoist:       internal.Pointer(true),
+		Mentionable: internal.Pointer(true),
+	})
 	if err != nil {
 		return fmt.Errorf("GuildRoleCreate failed: %s", err)
 	}
-	_, err = sess.GuildRoleEdit(args.GuildID, adminRole.ID, "LSDC2 Admin", 0x8833ff, true, 0, true)
-	if err != nil {
-		return fmt.Errorf("GuildRoleEdit failed: %s", err)
-	}
-	userRole, err := sess.GuildRoleCreate(args.GuildID)
+	userRole, err := sess.GuildRoleCreate(args.GuildID, &discordgo.RoleParams{
+		Name:        "LSDC2 User",
+		Color:       internal.Pointer(0x33aaff),
+		Hoist:       internal.Pointer(true),
+		Mentionable: internal.Pointer(true),
+	})
 	if err != nil {
 		return fmt.Errorf("GuildRoleCreate failed: %s", err)
-	}
-	_, err = sess.GuildRoleEdit(args.GuildID, userRole.ID, "LSDC2 User", 0x33aaff, true, 0, true)
-	if err != nil {
-		return fmt.Errorf("GuildRoleEdit failed: %s", err)
 	}
 
 	gc.AdminRoleID = adminRole.ID
