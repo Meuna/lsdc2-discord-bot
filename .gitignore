@@ -3,4 +3,6 @@ venv
 .vscode
 
 # Build
-build
+backend
+frontend
+*.zip
