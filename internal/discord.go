@@ -136,7 +136,7 @@ func BearerSession(clientID string, clientSecret string, scope string) (sess *di
 	cleanup = func() {
 		err := RevokeBearerToken(clientID, clientSecret, token)
 		if err != nil {
-			err = fmt.Errorf("RevokeBearerToken failed %s", err)
+			err = fmt.Errorf("RevokeBearerToken / %s", err)
 			panic(err)
 		}
 	}

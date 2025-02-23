@@ -63,7 +63,7 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 	key := []byte(bot.ClientSecret)
 	serverName, channelID, mac, eol, err := bot._parseQuery(request)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("_parseQuery failed: %s", err)
+		return internal.Error500(), fmt.Errorf("_parseQuery / %s", err)
 	}
 
 	// Verify MAC and TTL
@@ -78,7 +78,7 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 	inst := internal.ServerInstance{}
 	err = internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("DynamodbGetItem failed: %s", err)
+		return internal.Error500(), fmt.Errorf("DynamodbGetItem / %s", err)
 	}
 	if inst.SpecName == "" {
 		return internal.Error500(), fmt.Errorf("instance %s not found", channelID)
@@ -87,7 +87,7 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 	// Presign S3 PUT
 	url, err := internal.PresignPutS3Object(bot.SaveGameBucket, inst.Name, time.Minute)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("PresignGetS3Object failed: %s", err)
+		return internal.Error500(), fmt.Errorf("PresignGetS3Object / %s", err)
 	}
 
 	r := strings.NewReplacer("{{serverName}}", serverName, "{{presignedUrl}}", url)
@@ -139,7 +139,7 @@ func (bot Frontend) discordRoute(request events.LambdaFunctionURLRequest) (event
 
 	var itn discordgo.Interaction
 	if err := itn.UnmarshalJSON([]byte(request.Body)); err != nil {
-		return internal.Error500(), fmt.Errorf("UnmarshalJSON failed: %s", err)
+		return internal.Error500(), fmt.Errorf("UnmarshalJSON / %s", err)
 	}
 
 	switch itn.Type {
@@ -191,7 +191,7 @@ func (bot Frontend) ackMessage() (events.APIGatewayProxyResponse, error) {
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal / %s", err)
 	}
 	return internal.Json200(string(jsonBytes[:])), nil
 }
@@ -202,7 +202,7 @@ func (bot Frontend) ackComponent() (events.APIGatewayProxyResponse, error) {
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal / %s", err)
 	}
 	return internal.Json200(string(jsonBytes[:])), nil
 }
@@ -216,7 +216,7 @@ func (bot Frontend) reply(msg string, fmtarg ...interface{}) (events.APIGatewayP
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal / %s", err)
 	}
 	return internal.Json200(string(jsonBytes[:])), nil
 }
@@ -241,7 +241,7 @@ func (bot Frontend) replyLink(url string, label string, msg string, fmtarg ...in
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal / %s", err)
 	}
 	return internal.Json200(string(jsonBytes[:])), nil
 }
@@ -249,7 +249,7 @@ func (bot Frontend) replyLink(url string, label string, msg string, fmtarg ...in
 func (bot Frontend) confirm(itnSrc discordgo.Interaction, cmd internal.BackendCmd, msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
 	customID, err := internal.MarshalCustomIDAction(cmd)
 	if err != nil {
-		fmt.Printf("MarshalCustomIDAction failed: %s\n", err)
+		fmt.Println("error MarshalCustomIDAction /", err)
 		return bot.reply("🚫 Internal error")
 	}
 
@@ -278,7 +278,7 @@ func (bot Frontend) confirm(itnSrc discordgo.Interaction, cmd internal.BackendCm
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal / %s", err)
 	}
 	return internal.Json200(string(jsonBytes[:])), nil
 }
@@ -286,7 +286,7 @@ func (bot Frontend) confirm(itnSrc discordgo.Interaction, cmd internal.BackendCm
 func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[string]string) (events.APIGatewayProxyResponse, error) {
 	customID, err := internal.MarshalCustomIDAction(cmd)
 	if err != nil {
-		fmt.Printf("MarshalCustomIDAction failed: %s\n", err)
+		fmt.Println("error MarshalCustomIDAction /", err)
 		return bot.reply("🚫 Internal error")
 	}
 
@@ -317,7 +317,7 @@ func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[s
 
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal / %s", err)
 	}
 	return internal.Json200(string(jsonBytes[:])), nil
 }
@@ -325,7 +325,7 @@ func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[s
 func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label string) (events.APIGatewayProxyResponse, error) {
 	customID, err := internal.MarshalCustomIDAction(cmd)
 	if err != nil {
-		fmt.Printf("MarshalCustomIDAction failed: %s\n", err)
+		fmt.Println("error MarshalCustomIDAction /", err)
 		return bot.reply("🚫 Internal error")
 	}
 
@@ -351,7 +351,7 @@ func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label stri
 
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal / %s", err)
 	}
 	return internal.Json200(string(jsonBytes[:])), nil
 }
@@ -388,7 +388,7 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction) (events.APIGatewayPr
 	case internal.UploadAPI:
 		return bot.savegameUpload(itn.ChannelID)
 	default:
-		fmt.Printf("Unknown command %s\n", acd.Name)
+		fmt.Println("Unknown command", acd.Name)
 		return bot.reply("I don't understand ¯\\_(ツ)_/¯")
 	}
 }
@@ -402,11 +402,11 @@ func (bot Frontend) routeMessageComponent(itn discordgo.Interaction) (events.API
 	if _componentMessageOrigin != nil {
 		sess, err := discordgo.New("Bot " + bot.Token)
 		if err != nil {
-			fmt.Printf("discordgo.New failed: %s\n", err)
+			fmt.Println("error discordgo.New /", err)
 		}
 		err = sess.InteractionResponseDelete(_componentMessageOrigin)
 		if err != nil {
-			fmt.Printf("InteractionResponseDelete failed: %s\n", err)
+			fmt.Println("error InteractionResponseDelete /", err)
 		}
 		_componentMessageOrigin = nil
 	}
@@ -415,14 +415,14 @@ func (bot Frontend) routeMessageComponent(itn discordgo.Interaction) (events.API
 
 	// Do nothing if canceled
 	if mcd.CustomID == "cancel" {
-		fmt.Printf("Action canceled")
+		fmt.Println("Action canceled")
 		return bot.ackComponent()
 	}
 
 	// Or proceed with action
 	cmd, err := internal.UnmarshallCustomIDAction(mcd.CustomID)
 	if err != nil {
-		fmt.Printf("UnmarshallCustomIDAction failed: %s\n", err)
+		fmt.Println("error UnmarshallCustomIDAction /", err)
 		bot.reply("🚫 Internal error")
 	}
 	cmd.AppID = itn.AppID
@@ -436,7 +436,7 @@ func (bot Frontend) routeMessageComponent(itn discordgo.Interaction) (events.API
 
 	// And finally call the backend
 	if err := bot.callBackend(cmd); err != nil {
-		fmt.Printf("callBackend failed: %s\n", err)
+		fmt.Println("error callBackend /", err)
 		return bot.reply("🚫 Internal error")
 	}
 
@@ -448,7 +448,7 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 
 	cmd, err := internal.UnmarshallCustomIDAction(msd.CustomID)
 	if err != nil {
-		fmt.Printf("UnmarshallCustomIDAction failed: %s\n", err)
+		fmt.Println("error UnmarshallCustomIDAction /", err)
 		bot.reply("🚫 Internal error")
 	}
 
@@ -458,13 +458,12 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 	case internal.SpinupAPI:
 		return bot.requestServerCreation(itn)
 	default:
-		fmt.Printf("Unknown command %s\n", cmd.Action())
+		fmt.Println("Unknown command", cmd.Action())
 		return bot.reply("I don't understand ¯\\_(ツ)_/¯")
 	}
 }
 
 func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
-	fmt.Printf("DATA: %+v\n", itn)
 	return bot.reply("🚫 Not implemented yet")
 }
 
@@ -484,7 +483,7 @@ func (bot Frontend) requestNewGameRegister(itn discordgo.Interaction) (events.AP
 			} else if opt.Name == internal.RegisterGameAPIOverwriteOpt {
 				args.Overwrite = opt.BoolValue()
 			} else {
-				fmt.Printf("Unknown option %s", opt.Name)
+				fmt.Println("Unknown option", opt.Name)
 				return bot.reply("🚫 Internal error")
 			}
 		}
@@ -497,7 +496,7 @@ func (bot Frontend) requestNewGameRegister(itn discordgo.Interaction) (events.AP
 		msd := itn.ModalSubmitData()
 		cmdModal, err := internal.UnmarshallCustomIDAction(msd.CustomID)
 		if err != nil {
-			fmt.Printf("UnmarshallCustomIDAction failed: %s\n", err)
+			fmt.Println("error UnmarshallCustomIDAction /", err)
 			bot.reply("🚫 Internal error")
 		}
 
@@ -512,7 +511,7 @@ func (bot Frontend) requestNewGameRegister(itn discordgo.Interaction) (events.AP
 	cmd.Args = &args
 
 	if err := bot.callBackend(cmd); err != nil {
-		fmt.Printf("callBackend failed: %s\n", err)
+		fmt.Println("error callBackend /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	return bot.ackMessage()
@@ -535,7 +534,7 @@ func (bot Frontend) confirmServerDestruction(itn discordgo.Interaction) (events.
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbScanFind(bot.InstanceTable, "name", serverName, &inst)
 	if err != nil {
-		fmt.Printf("DynamodbScanFind failed: %s\n", err)
+		fmt.Println("error DynamodbScanFind /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	if inst.ChannelID == "" {
@@ -557,7 +556,7 @@ func (bot Frontend) configureServerCreation(itn discordgo.Interaction) (events.A
 	spec := internal.ServerSpec{}
 	err := internal.DynamodbGetItem(bot.SpecTable, gameName, &spec)
 	if err != nil {
-		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		fmt.Println("error DynamodbGetItem /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	if spec.Name == "" {
@@ -588,7 +587,7 @@ func (bot Frontend) requestServerCreation(itn discordgo.Interaction) (events.API
 
 	cmd, err := internal.UnmarshallCustomIDAction(msd.CustomID)
 	if err != nil {
-		fmt.Printf("UnmarshallCustomIDAction failed: %s\n", err)
+		fmt.Println("error UnmarshallCustomIDAction /", err)
 		bot.reply("🚫 Internal error")
 	}
 
@@ -605,7 +604,7 @@ func (bot Frontend) requestServerCreation(itn discordgo.Interaction) (events.API
 	cmd.Token = itn.Token
 
 	if err := bot.callBackend(cmd); err != nil {
-		fmt.Printf("callBackend failed: %s\n", err)
+		fmt.Println("error callBackend /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	return bot.ackMessage()
@@ -629,7 +628,7 @@ func (bot Frontend) requestMemberInvite(itn discordgo.Interaction) (events.APIGa
 	}
 
 	if err := bot.callBackend(cmd); err != nil {
-		fmt.Printf("callBackend failed: %s\n", err)
+		fmt.Println("error callBackend /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	return bot.ackMessage()
@@ -653,7 +652,7 @@ func (bot Frontend) requestMemberKick(itn discordgo.Interaction) (events.APIGate
 	}
 
 	if err := bot.callBackend(cmd); err != nil {
-		fmt.Printf("callBackend failed: %s\n", err)
+		fmt.Println("error callBackend /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	return bot.ackMessage()
@@ -667,7 +666,7 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
-		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		fmt.Println("error DynamodbGetItem /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	if inst.SpecName == "" {
@@ -678,7 +677,7 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	if inst.TaskArn != "" {
 		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
 		if err != nil {
-			fmt.Printf("DescribeTask failed: %s\n", err)
+			fmt.Println("error DescribeTask /", err)
 			return bot.reply("🚫 Internal error")
 		}
 		if task != nil {
@@ -700,13 +699,13 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 
 	taskArn, err := internal.StartTask(inst, bot.Lsdc2Stack)
 	if err != nil {
-		fmt.Printf("StartTask failed: %s\n", err)
+		fmt.Println("error StartTask /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	inst.TaskArn = taskArn
 	err = internal.DynamodbPutItem(bot.InstanceTable, inst)
 	if err != nil {
-		fmt.Printf("DynamodbPutItem failed: %s\n", err)
+		fmt.Println("error DynamodbPutItem /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	return bot.reply("✅ Server starting (wait few minutes)")
@@ -716,7 +715,7 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
-		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		fmt.Println("error DynamodbGetItem /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	if inst.SpecName == "" {
@@ -729,7 +728,7 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	}
 
 	if err = internal.StopTask(inst, bot.Lsdc2Stack); err != nil {
-		fmt.Printf("StopTask failed: %s\n", err)
+		fmt.Println("error StopTask /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	return bot.reply("⚠ Server is going offline")
@@ -739,7 +738,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
-		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		fmt.Println("error DynamodbGetItem /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	if inst.SpecName == "" {
@@ -749,7 +748,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 	spec := internal.ServerSpec{}
 	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
 	if err != nil {
-		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		fmt.Println("error DynamodbGetItem /", err)
 		return bot.reply("🚫 Internal error")
 	}
 
@@ -758,7 +757,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 	}
 	task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
 	if err != nil {
-		fmt.Printf("DescribeTask failed: %s\n", err)
+		fmt.Println("error DescribeTask /", err)
 		return bot.reply("🚫 Internal error")
 	}
 
@@ -777,7 +776,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 
 	ip, err := internal.GetTaskIP(task, bot.Lsdc2Stack)
 	if err != nil {
-		fmt.Printf("GetTaskIP failed with error: %s\n", err)
+		fmt.Println("error GetTaskIP /", err)
 		return bot.reply("⚠ Public IP not available, contact administrator")
 	}
 	return bot.reply("✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
@@ -788,7 +787,7 @@ func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyRe
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
-		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		fmt.Println("error DynamodbGetItem /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	if inst.SpecName == "" {
@@ -797,7 +796,7 @@ func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyRe
 
 	url, err := internal.PresignGetS3Object(bot.SaveGameBucket, inst.Name, time.Minute)
 	if err != nil {
-		fmt.Printf("PresignGetS3Object failed: %s\n", err)
+		fmt.Println("error PresignGetS3Object /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	return bot.reply("Link to %s savegame: [Download](%s)", inst.Name, url)
@@ -808,7 +807,7 @@ func (bot Frontend) savegameUpload(channelID string) (events.APIGatewayProxyResp
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
-		fmt.Printf("DynamodbGetItem failed: %s\n", err)
+		fmt.Println("error DynamodbGetItem /", err)
 		return bot.reply("🚫 Internal error")
 	}
 	if inst.SpecName == "" {
