@@ -339,7 +339,19 @@ func EnableChannelCommands(sess *discordgo.Session, appID string, guildID string
 // Commands helpers
 //
 
-var lsdc2Commands = []*discordgo.ApplicationCommand{
+var guildsCommands = []*discordgo.ApplicationCommand{
+	{
+		Name:        SpinupAPI,
+		Description: "Start a new server instance",
+		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Name:        "game-type",
+				Description: "Game type to start",
+				Required:    true,
+				Type:        discordgo.ApplicationCommandOptionString,
+			},
+		},
+	},
 	{
 		Name:        DestroyAPI,
 		Description: "Destroy a server",
@@ -398,8 +410,8 @@ var lsdc2Commands = []*discordgo.ApplicationCommand{
 	},
 }
 
-func SetupLsdc2Commands(sess *discordgo.Session, appID string, guildID string) error {
-	for _, cmd := range lsdc2Commands {
+func CreateGuildsCommands(sess *discordgo.Session, appID string, guildID string) error {
+	for _, cmd := range guildsCommands {
 		fmt.Printf("Bootstraping %s: %s command\n", guildID, cmd.Name)
 		_, err := sess.ApplicationCommandCreate(appID, guildID, cmd)
 		if err != nil {
