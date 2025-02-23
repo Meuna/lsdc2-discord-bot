@@ -50,22 +50,3 @@ json_registergame = {
 }
 r = requests.post(url, headers=headers, json=json_registergame)
 print("REGISTER-GAME result: ", r.content)
-
-json_spinupgame = {
-    "name": "spinup",
-    "type": CHAT_INPUT,
-    "description": "Start a new server instance",
-    "integration_types": [GUILD_INSTALL],
-    "contexts": [CTX_GUILD],
-    "default_member_permissions": MANAGER_PERM,
-    "options": [
-        {
-            "type": OPT_STRING,
-            "name": "game-type",
-            "description": "Game type to start",
-            "required": True,
-        },
-    ],
-}
-r = requests.post(url, headers=headers, json=json_spinupgame)
-print("SPINUP result: ", r.content)

@@ -30,12 +30,12 @@ type Event struct {
 func handleEvent(ctx context.Context, event Event) error {
 	bot := ctx.Value("bot").(Backend)
 
-	if event.Source == "" {
-		fmt.Println("Received SQS event")
+	if len(event.SQSEvent.Records) > 0 {
 		bot.handleSQSEvent(event.SQSEvent)
-	} else {
-		fmt.Printf("Received '%s' CloudWatch event\n", event.DetailType)
+	} else if event.CloudWatchEvent.DetailType != "" {
 		bot.handleCloudWatchEvent(event.CloudWatchEvent)
+	} else {
+		fmt.Println("Could not discriminate event type")
 	}
 
 	// We make the bot unable to fail: events will never get back to the queue
@@ -55,6 +55,8 @@ type Backend struct {
 }
 
 func (bot Backend) handleSQSEvent(event events.SQSEvent) {
+	fmt.Println("Received SQS event")
+
 	for _, msg := range event.Records {
 		cmd, err := internal.UnmarshallQueuedAction(msg)
 		if err != nil {
@@ -66,6 +68,8 @@ func (bot Backend) handleSQSEvent(event events.SQSEvent) {
 }
 
 func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
+	fmt.Printf("Received '%s' CloudWatch event\n", event.DetailType)
+
 	switch event.DetailType {
 	case "ECS Task State Change":
 		bot.notifyTaskUpdate(event)
@@ -500,7 +504,7 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 		return
 	}
 	fmt.Printf("Bootstraping %s: command creation\n", args.GuildID)
-	if err := internal.SetupLsdc2Commands(sess, cmd.AppID, args.GuildID); err != nil {
+	if err := internal.CreateGuildsCommands(sess, cmd.AppID, args.GuildID); err != nil {
 		fmt.Printf("SetupLsdc2Commands failed: %s\n", err)
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -627,14 +631,10 @@ func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.Boot
 	if err != nil {
 		return fmt.Errorf("GetAllCommands failed: %s", err)
 	}
-	ownerCmd := internal.FilterCommandsByName(allCmd, internal.OwnerCmd)
+
 	adminCmd := internal.FilterCommandsByName(allCmd, internal.AdminCmd)
 	userCmd := internal.FilterCommandsByName(allCmd, internal.UserCmd)
 
-	err = internal.DisableCommands(sess, cmd.AppID, args.GuildID, ownerCmd)
-	if err != nil {
-		return fmt.Errorf("DisableCommands failed: %s", err)
-	}
 	err = internal.SetupAdminCommands(sess, cmd.AppID, args.GuildID, gc, adminCmd)
 	if err != nil {
 		return fmt.Errorf("SetupAdminCommands failed: %s", err)
