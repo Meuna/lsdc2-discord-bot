@@ -38,7 +38,6 @@ func AllChannel(guildID string) string {
 //
 
 func IsAdmin(member *discordgo.Member) bool {
-	fmt.Printf("%b\n%b\n%b\n", member.Permissions, PermAdmin, (member.Permissions & PermAdmin))
 	return (member.Permissions & PermAdmin) > 0
 }
 
