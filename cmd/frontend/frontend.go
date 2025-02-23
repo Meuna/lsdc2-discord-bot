@@ -9,11 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"lsdc2/discordbot/internal"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/meuna/lsdc2-discord-bot/internal"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -105,7 +106,7 @@ func (bot Frontend) error500() events.APIGatewayProxyResponse {
 //	Upload route
 //
 
-//go:embed static/upload.html
+//go:embed upload.html
 var uploadPage string
 
 func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {

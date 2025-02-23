@@ -1,4 +1,4 @@
-module lsdc2/discordbot
+module github.com/meuna/lsdc2-discord-bot
 
 go 1.23.0
 
