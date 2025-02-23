@@ -149,7 +149,7 @@ func (bot Frontend) discordRoute(request events.LambdaFunctionURLRequest) (event
 
 	case discordgo.InteractionApplicationCommand:
 		fmt.Println("Received application command interaction")
-		return bot.routeCommand(itn)
+		return bot.routeCommand(itn, request)
 
 	case discordgo.InteractionMessageComponent:
 		fmt.Println("Received message component interaction")
@@ -360,7 +360,7 @@ func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label stri
 //	Command routing
 //
 
-func (bot Frontend) routeCommand(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	fmt.Printf("Routing '%s' application command\n", acd.Name)
 
@@ -386,7 +386,7 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction) (events.APIGatewayPr
 	case internal.DownloadAPI:
 		return bot.savegameDownload(itn.ChannelID)
 	case internal.UploadAPI:
-		return bot.savegameUpload(itn.ChannelID)
+		return bot.savegameUpload(itn.ChannelID, request.RequestContext.DomainName)
 	default:
 		fmt.Println("Unknown command", acd.Name)
 		return bot.reply("I don't understand ¯\\_(ツ)_/¯")
@@ -670,7 +670,7 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 		return bot.reply("🚫 Internal error")
 	}
 	if inst.SpecName == "" {
-		return bot.reply("🚫 Internal error. Are you in a server channel ?")
+		return bot.reply("🚫 Unrecognised server channel")
 	}
 
 	// Check that the task is not yet running
@@ -802,7 +802,7 @@ func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyRe
 	return bot.reply("Link to %s savegame: [Download](%s)", inst.Name, url)
 }
 
-func (bot Frontend) savegameUpload(channelID string) (events.APIGatewayProxyResponse, error) {
+func (bot Frontend) savegameUpload(channelID string, domainName string) (events.APIGatewayProxyResponse, error) {
 	// Check that we are in a server channel
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
@@ -828,7 +828,7 @@ func (bot Frontend) savegameUpload(channelID string) (events.APIGatewayProxyResp
 
 	url := url.URL{
 		Scheme:   "https",
-		Host:     "krbcuodbyr7qljkz6y2dsiun2q0igotx.lambda-url.eu-west-3.on.aws",
+		Host:     domainName,
 		Path:     "upload",
 		RawQuery: values.Encode(),
 	}
