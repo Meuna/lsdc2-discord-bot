@@ -199,13 +199,6 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	}
 	spec.SecurityGroup = sgID
 
-	// Update spinup command
-	if err := bot._updateSpinupOptions(cmd, args, spec.Name, gameList); err != nil {
-		fmt.Println("_updateSpinupOptions failed", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
 	// Finally, persist the spec in db
 	fmt.Printf("Registerting %s: dp register\n", spec.Name)
 	err = internal.DynamodbPutItem(bot.SpecTable, spec)
@@ -255,44 +248,6 @@ func (bot Backend) _getSpec(cmd internal.BackendCmd, args internal.RegisterGameA
 	}
 
 	return
-}
-
-func (bot Backend) _updateSpinupOptions(cmd internal.BackendCmd, args internal.RegisterGameArgs, specName string, gameList []string) error {
-	// Retrieve spinup command
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		return fmt.Errorf("discordgo.New / %s", err)
-	}
-	fmt.Printf("Registerting %s: lookup spinup command\n", specName)
-	globalCmd, err := sess.ApplicationCommands(cmd.AppID, "")
-	if err != nil {
-		return fmt.Errorf("ApplicationCommands / %s", err)
-	}
-	var spinupCmd *discordgo.ApplicationCommand
-	for _, cmd := range globalCmd {
-		if cmd.Name == internal.SpinupAPI {
-			spinupCmd = cmd
-			break
-		}
-	}
-	if spinupCmd == nil {
-		return fmt.Errorf("spinup cmd not found")
-	}
-
-	// spinup command options update
-	spinupCmd.Options[0].Choices = make([]*discordgo.ApplicationCommandOptionChoice, len(gameList))
-	for idx, gameName := range gameList {
-		spinupCmd.Options[0].Choices[idx] = &discordgo.ApplicationCommandOptionChoice{
-			Value: gameName,
-			Name:  gameName,
-		}
-	}
-	_, err = sess.ApplicationCommandEdit(cmd.AppID, "", spinupCmd.ID, spinupCmd)
-	if err != nil {
-		return fmt.Errorf("applicationCommandEdit / %s", err)
-	}
-
-	return nil
 }
 
 //	Game spinup
