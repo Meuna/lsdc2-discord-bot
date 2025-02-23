@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"lsdc2/discordbot/internal"
 	"net/http"
+
+	"github.com/meuna/lsdc2-discord-bot/internal"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"

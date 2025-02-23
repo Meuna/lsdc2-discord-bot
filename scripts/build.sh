@@ -14,8 +14,12 @@ podman run \
     docker.io/golang:1.24-bullseye \
     /bin/bash -c ' \
         go get ./... && \
-        go build -ldflags "-s -w" frontend.go && \
-        go build -ldflags "-s -w" backend.go'
+        go build -ldflags "-s -w" cmd/frontend/frontend.go && \
+        go build -ldflags "-s -w" cmd/backend/backend.go'
 
-zip --junk-paths frontend.zip frontend
-zip --junk-paths backend.zip backend
+# AWS lambda requires a bootstrap filename
+mv frontend bootstrap
+zip --junk-paths frontend.zip bootstrap
+mv backend bootstrap
+zip --junk-paths backend.zip bootstrap
+rm bootstrap
