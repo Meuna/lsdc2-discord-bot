@@ -36,7 +36,7 @@ func handleRequest(ctx context.Context, request events.LambdaFunctionURLRequest)
 	} else if request.RawPath == "/upload" {
 		return bot.uploadRoute(request)
 	} else {
-		return bot.error404(), nil
+		return internal.Error404(), nil
 	}
 }
 
@@ -52,56 +52,6 @@ type Frontend struct {
 	internal.BotEnv
 }
 
-func (bot Frontend) json200(msg string) events.APIGatewayProxyResponse {
-	return events.APIGatewayProxyResponse{
-		StatusCode: 200,
-		Body:       msg,
-		Headers: map[string]string{
-			"content-type": "application/json",
-		},
-	}
-}
-
-func (bot Frontend) html200(msg string) events.APIGatewayProxyResponse {
-	return events.APIGatewayProxyResponse{
-		StatusCode: 200,
-		Body:       msg,
-		Headers: map[string]string{
-			"content-type": "text/html",
-		},
-	}
-}
-
-func (bot Frontend) error401(msg string) events.APIGatewayProxyResponse {
-	return events.APIGatewayProxyResponse{
-		StatusCode: 401,
-		Body:       msg,
-		Headers: map[string]string{
-			"content-type": "text/html",
-		},
-	}
-}
-
-func (bot Frontend) error404() events.APIGatewayProxyResponse {
-	return events.APIGatewayProxyResponse{
-		StatusCode: 404,
-		Body:       "404: content not found",
-		Headers: map[string]string{
-			"content-type": "text/html",
-		},
-	}
-}
-
-func (bot Frontend) error500() events.APIGatewayProxyResponse {
-	return events.APIGatewayProxyResponse{
-		StatusCode: 500,
-		Body:       "500: content not found",
-		Headers: map[string]string{
-			"content-type": "text/html",
-		},
-	}
-}
-
 //
 //	Upload route
 //
@@ -113,37 +63,37 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 	key := []byte(bot.ClientSecret)
 	serverName, channelID, mac, eol, err := bot._parseQuery(request)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("_parseQuery failed: %s", err)
+		return internal.Error500(), fmt.Errorf("_parseQuery failed: %s", err)
 	}
 
 	// Verify MAC and TTL
 	if !internal.VerifyMacWithTTL(key, []byte(channelID), eol, mac) {
-		return bot.error401("401: MAC verification failed"), nil
+		return internal.Error401("401: MAC verification failed"), nil
 	}
 	if time.Now().Unix() > eol {
-		return bot.error401("401: MAC expired"), nil
+		return internal.Error401("401: MAC expired"), nil
 	}
 
 	// Retrieve instance
 	inst := internal.ServerInstance{}
 	err = internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("DynamodbGetItem failed: %s", err)
+		return internal.Error500(), fmt.Errorf("DynamodbGetItem failed: %s", err)
 	}
 	if inst.SpecName == "" {
-		return bot.error500(), fmt.Errorf("instance %s not found", channelID)
+		return internal.Error500(), fmt.Errorf("instance %s not found", channelID)
 	}
 
 	// Presign S3 PUT
 	url, err := internal.PresignPutS3Object(bot.SaveGameBucket, inst.Name, time.Minute)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("PresignGetS3Object failed: %s", err)
+		return internal.Error500(), fmt.Errorf("PresignGetS3Object failed: %s", err)
 	}
 
 	r := strings.NewReplacer("{{serverName}}", serverName, "{{presignedUrl}}", url)
 	uploadPageWithPutUrl := r.Replace(uploadPage)
 
-	return bot.html200(uploadPageWithPutUrl), nil
+	return internal.Html200(uploadPageWithPutUrl), nil
 }
 
 func (bot Frontend) _parseQuery(request events.LambdaFunctionURLRequest) (serverName string, channelID string, mac []byte, eol int64, err error) {
@@ -184,18 +134,18 @@ func (bot Frontend) _parseQuery(request events.LambdaFunctionURLRequest) (server
 
 func (bot Frontend) discordRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
 	if !bot.checkDiscordSignature(request) {
-		return bot.error401(""), errors.New("signature check failed")
+		return internal.Error401(""), errors.New("signature check failed")
 	}
 
 	var itn discordgo.Interaction
 	if err := itn.UnmarshalJSON([]byte(request.Body)); err != nil {
-		return bot.error500(), fmt.Errorf("UnmarshalJSON failed: %s", err)
+		return internal.Error500(), fmt.Errorf("UnmarshalJSON failed: %s", err)
 	}
 
 	switch itn.Type {
 	case discordgo.InteractionPing:
 		fmt.Println("Received PING interaction")
-		return bot.json200(`{"type": 1}`), nil
+		return internal.Json200(`{"type": 1}`), nil
 
 	case discordgo.InteractionApplicationCommand:
 		fmt.Println("Received application command interaction")
@@ -214,7 +164,7 @@ func (bot Frontend) discordRoute(request events.LambdaFunctionURLRequest) (event
 		return bot.routeModalSubmit(itn)
 
 	default:
-		return bot.error500(), fmt.Errorf("unknown interaction type %v", itn.Type)
+		return internal.Error500(), fmt.Errorf("unknown interaction type %v", itn.Type)
 	}
 }
 
@@ -241,9 +191,9 @@ func (bot Frontend) ackMessage() (events.APIGatewayProxyResponse, error) {
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
 	}
-	return bot.json200(string(jsonBytes[:])), nil
+	return internal.Json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) ackComponent() (events.APIGatewayProxyResponse, error) {
@@ -252,9 +202,9 @@ func (bot Frontend) ackComponent() (events.APIGatewayProxyResponse, error) {
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
 	}
-	return bot.json200(string(jsonBytes[:])), nil
+	return internal.Json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) reply(msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
@@ -266,9 +216,9 @@ func (bot Frontend) reply(msg string, fmtarg ...interface{}) (events.APIGatewayP
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
 	}
-	return bot.json200(string(jsonBytes[:])), nil
+	return internal.Json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) replyLink(url string, label string, msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
@@ -291,9 +241,9 @@ func (bot Frontend) replyLink(url string, label string, msg string, fmtarg ...in
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
 	}
-	return bot.json200(string(jsonBytes[:])), nil
+	return internal.Json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) confirm(itnSrc discordgo.Interaction, cmd internal.BackendCmd, msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
@@ -328,9 +278,9 @@ func (bot Frontend) confirm(itnSrc discordgo.Interaction, cmd internal.BackendCm
 	}
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
 	}
-	return bot.json200(string(jsonBytes[:])), nil
+	return internal.Json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[string]string) (events.APIGatewayProxyResponse, error) {
@@ -367,9 +317,9 @@ func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[s
 
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
 	}
-	return bot.json200(string(jsonBytes[:])), nil
+	return internal.Json200(string(jsonBytes[:])), nil
 }
 
 func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label string) (events.APIGatewayProxyResponse, error) {
@@ -401,9 +351,9 @@ func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label stri
 
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
-		return bot.error500(), fmt.Errorf("marshal failed: %s", err)
+		return internal.Error500(), fmt.Errorf("marshal failed: %s", err)
 	}
-	return bot.json200(string(jsonBytes[:])), nil
+	return internal.Json200(string(jsonBytes[:])), nil
 }
 
 //

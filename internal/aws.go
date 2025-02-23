@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -36,6 +37,60 @@ func GetParameter(name string) (string, error) {
 	}
 
 	return *param.Parameter.Value, nil
+}
+
+//
+// Lambda helpers
+//
+
+func Json200(msg string) events.APIGatewayProxyResponse {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 200,
+		Body:       msg,
+		Headers: map[string]string{
+			"content-type": "application/json",
+		},
+	}
+}
+
+func Html200(msg string) events.APIGatewayProxyResponse {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 200,
+		Body:       msg,
+		Headers: map[string]string{
+			"content-type": "text/html",
+		},
+	}
+}
+
+func Error401(msg string) events.APIGatewayProxyResponse {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 401,
+		Body:       msg,
+		Headers: map[string]string{
+			"content-type": "text/html",
+		},
+	}
+}
+
+func Error404() events.APIGatewayProxyResponse {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 404,
+		Body:       "404: content not found",
+		Headers: map[string]string{
+			"content-type": "text/html",
+		},
+	}
+}
+
+func Error500() events.APIGatewayProxyResponse {
+	return events.APIGatewayProxyResponse{
+		StatusCode: 500,
+		Body:       "500: content not found",
+		Headers: map[string]string{
+			"content-type": "text/html",
+		},
+	}
 }
 
 //
