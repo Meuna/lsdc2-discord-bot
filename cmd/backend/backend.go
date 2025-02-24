@@ -129,8 +129,8 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 	case internal.RegisterGameAPI:
 		bot.registerGame(cmd)
 
-	case internal.BootstrapAPI:
-		bot.bootstrapGuild(cmd)
+	case internal.WelcomeAPI:
+		bot.welcomeGuild(cmd)
 
 	case internal.GoodbyeAPI:
 		bot.goodbyeGuild(cmd)
@@ -440,14 +440,14 @@ func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) error {
 	return nil
 }
 
-//	Bootstraping
+//	Welcoming
 
-func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
-	args := *cmd.Args.(*internal.BootstrapArgs)
-	fmt.Printf("Received bootstraping request with args %+v\n", args)
+func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.WelcomeArgs)
+	fmt.Printf("Received welcoming request with args %+v\n", args)
 
 	// Make sure the guild is not bootstrapped
-	fmt.Printf("Bootstraping %s: check if guild already exists\n", args.GuildID)
+	fmt.Printf("Welcoming %s: check if guild already exists\n", args.GuildID)
 	gcCheck := internal.GuildConf{}
 	if err := internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gcCheck); err != nil {
 		fmt.Println("error DynamodbGetItem /", err)
@@ -455,8 +455,8 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 		return
 	}
 	if gcCheck.GuildID != "" {
-		fmt.Println("Guild already have an entry in bootstrap table")
-		bot.followUp(cmd, "🚫 Guild already have an entry in bootstrap table")
+		fmt.Println("Guild already have an entry in guild table")
+		bot.followUp(cmd, "🚫 Guild already have an entry in guild table")
 		return
 	}
 
@@ -467,7 +467,7 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	fmt.Printf("Bootstraping %s: command creation\n", args.GuildID)
+	fmt.Printf("Welcoming %s: command creation\n", args.GuildID)
 	if err := internal.CreateGuildsCommands(sess, cmd.AppID, args.GuildID); err != nil {
 		fmt.Println("error CreateGuildsCommands /", err)
 		bot.followUp(cmd, "🚫 Internal error")
@@ -494,22 +494,22 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 	}
 
 	// Register conf
-	fmt.Printf("Bootstraping %s: register instance\n", args.GuildID)
+	fmt.Printf("Welcoming %s: register instance\n", args.GuildID)
 	if err := internal.DynamodbPutItem(bot.GuildTable, gc); err != nil {
 		fmt.Println("error DynamodbPutItem /", err)
 		bot.followUp(cmd, "🚫 Internal error")
 	}
 
-	bot.followUp(cmd, "✅ Bootstrap complete !")
+	bot.followUp(cmd, "✅ Welcome complete !")
 }
 
-func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.BootstrapArgs, gc *internal.GuildConf) error {
+func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.WelcomeArgs, gc *internal.GuildConf) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
 		return fmt.Errorf("discordgo.New / %s", err)
 	}
 
-	fmt.Printf("Bootstraping %s: LSDC2 roles\n", args.GuildID)
+	fmt.Printf("Welcoming %s: LSDC2 roles\n", args.GuildID)
 	adminRole, err := sess.GuildRoleCreate(args.GuildID, &discordgo.RoleParams{
 		Name:        "LSDC2 Admin",
 		Color:       internal.Pointer(0x8833ff),
@@ -535,13 +535,13 @@ func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.Bootstrap
 	return nil
 }
 
-func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.BootstrapArgs, gc *internal.GuildConf) error {
+func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.WelcomeArgs, gc *internal.GuildConf) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
 		return fmt.Errorf("discordgo.New / %s", err)
 	}
 
-	fmt.Printf("Bootstraping %s: LSDC2 category\n", args.GuildID)
+	fmt.Printf("Welcoming %s: LSDC2 category\n", args.GuildID)
 	lsdc2Category, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
 		Name: "LSDC2",
 		Type: discordgo.ChannelTypeGuildCategory,
@@ -549,7 +549,7 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Bootst
 	if err != nil {
 		return fmt.Errorf("GuildChannelCreateComplex / %s", err)
 	}
-	fmt.Printf("Bootstraping %s: admin channel\n", args.GuildID)
+	fmt.Printf("Welcoming %s: admin channel\n", args.GuildID)
 	adminChan, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
 		Name:     "administration",
 		Type:     discordgo.ChannelTypeGuildText,
@@ -562,7 +562,7 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Bootst
 	if err != nil {
 		return fmt.Errorf("GuildChannelCreateComplex / %s", err)
 	}
-	fmt.Printf("Bootstraping %s: welcome channel\n", args.GuildID)
+	fmt.Printf("Welcoming %s: welcome channel\n", args.GuildID)
 	welcomeChan, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
 		Name:     "welcome",
 		Type:     discordgo.ChannelTypeGuildText,
@@ -582,7 +582,7 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Bootst
 	return nil
 }
 
-func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.BootstrapArgs, gc internal.GuildConf) error {
+func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.WelcomeArgs, gc internal.GuildConf) error {
 	scope := "applications.commands.permissions.update applications.commands.update"
 	sess, cleanup, err := internal.BearerSession(bot.ClientID, bot.ClientSecret, scope)
 	if err != nil {
@@ -590,7 +590,7 @@ func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.Boot
 	}
 	defer cleanup()
 
-	fmt.Printf("Bootstraping %s: setting commands rights\n", args.GuildID)
+	fmt.Printf("Welcoming %s: setting commands rights\n", args.GuildID)
 	registeredCmd, err := sess.ApplicationCommands(cmd.AppID, args.GuildID)
 	if err != nil {
 		return fmt.Errorf("discordgo.ApplicationCommands / %s", err)
@@ -628,8 +628,8 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 		return
 	}
 	if gc.GuildID == "" {
-		fmt.Println("Guild does not any entry in bootstrap table")
-		bot.followUp(cmd, "🚫 Guild not does have any entry in bootstrap table")
+		fmt.Println("Guild does not any entry in guild table")
+		bot.followUp(cmd, "🚫 Guild not does have any entry in guild table")
 		return
 	}
 
