@@ -412,7 +412,7 @@ var __guildsCommands = []*discordgo.ApplicationCommand{
 
 func CreateGuildsCommands(sess *discordgo.Session, appID string, guildID string) error {
 	for _, cmd := range __guildsCommands {
-		fmt.Printf("Bootstraping %s: %s command\n", guildID, cmd.Name)
+		fmt.Printf("Welcoming %s: %s command\n", guildID, cmd.Name)
 		_, err := sess.ApplicationCommandCreate(appID, guildID, cmd)
 		if err != nil {
 			return err

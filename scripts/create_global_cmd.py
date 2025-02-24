@@ -17,15 +17,15 @@ headers = {"Authorization": f"Bot {token}"}
 
 url = f"https://discord.com/api/v10/applications/{app}/commands"
 
-json_bootstrap = {
-    "name": "bootstrap",
+json_welcomeguild = {
+    "name": "welcome-guild",
     "type": CHAT_INPUT,
-    "description": "Register LSDC2 bot commands in your guild",
+    "description": "Deploy LSDC2 bot commands, channels and roles in your guild",
     "integration_types": [GUILD_INSTALL],
     "contexts": [CTX_GUILD],
     "default_member_permissions": ADMINISTRATOR_PERM,
 }
-r = requests.post(url, headers=headers, json=json_bootstrap)
+r = requests.post(url, headers=headers, json=json_welcomeguild)
 print("BOOSTRAP result: ", r.content)
 
 json_goodbyeguild = {

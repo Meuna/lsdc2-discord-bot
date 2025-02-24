@@ -9,7 +9,7 @@ import (
 
 const (
 	RegisterGameAPI = "register-game"
-	BootstrapAPI    = "bootstrap"
+	WelcomeAPI      = "welcome-guild"
 	GoodbyeAPI      = "goodbye-guild"
 	SpinupAPI       = "spinup"
 	DestroyAPI      = "destroy"
@@ -23,7 +23,7 @@ const (
 )
 
 var (
-	OwnerCmd      = []string{RegisterGameAPI, BootstrapAPI, GoodbyeAPI}
+	OwnerCmd      = []string{RegisterGameAPI, WelcomeAPI, GoodbyeAPI}
 	AdminCmd      = []string{SpinupAPI, DestroyAPI, InviteAPI, KickAPI}
 	InviteKickCmd = []string{InviteAPI, KickAPI}
 	UserCmd       = []string{StartAPI, StopAPI, StatusAPI, DownloadAPI, UploadAPI}
@@ -44,8 +44,8 @@ func (cmd BackendCmd) Action() string {
 	switch cmd.Args.(type) {
 	case *RegisterGameArgs, RegisterGameArgs:
 		return RegisterGameAPI
-	case *BootstrapArgs, BootstrapArgs:
-		return BootstrapAPI
+	case *WelcomeArgs, WelcomeArgs:
+		return WelcomeAPI
 	case *GoodbyeArgs, GoodbyeArgs:
 		return GoodbyeAPI
 	case *SpinupArgs, SpinupArgs:
@@ -78,8 +78,8 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 	switch tmp.Action {
 	case RegisterGameAPI:
 		cmd.Args = &RegisterGameArgs{}
-	case BootstrapAPI:
-		cmd.Args = &BootstrapArgs{}
+	case WelcomeAPI:
+		cmd.Args = &WelcomeArgs{}
 	case GoodbyeAPI:
 		cmd.Args = &GoodbyeArgs{}
 	case SpinupAPI:
@@ -114,7 +114,7 @@ type RegisterGameArgs struct {
 	Overwrite bool
 }
 
-type BootstrapArgs struct {
+type WelcomeArgs struct {
 	GuildID string
 }
 

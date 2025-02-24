@@ -367,8 +367,8 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.Lambd
 	switch acd.Name {
 	case internal.RegisterGameAPI:
 		return bot.requestNewGameRegister(itn)
-	case internal.BootstrapAPI:
-		return bot.confirmGuildBootstrap(itn)
+	case internal.WelcomeAPI:
+		return bot.confirmWelcomeGuild(itn)
 	case internal.GoodbyeAPI:
 		return bot.confirmGuildGoodbye(itn)
 	case internal.SpinupAPI:
@@ -519,13 +519,13 @@ func (bot Frontend) requestNewGameRegister(itn discordgo.Interaction) (events.AP
 	return bot.ackMessage()
 }
 
-func (bot Frontend) confirmGuildBootstrap(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+func (bot Frontend) confirmWelcomeGuild(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	cmd := internal.BackendCmd{
-		Args: &internal.BootstrapArgs{
+		Args: &internal.WelcomeArgs{
 			GuildID: itn.GuildID,
 		},
 	}
-	return bot.confirm(itn, cmd, "Confirm LSDC2 bootstrap for your guild ?")
+	return bot.confirm(itn, cmd, "Do you confirm you welcome LSDC2 bot, including its role and channels in your guild ?")
 }
 
 func (bot Frontend) confirmGuildGoodbye(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
