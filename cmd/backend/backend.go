@@ -11,6 +11,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/bwmarrin/discordgo"
 )
@@ -130,6 +132,9 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 	case internal.BootstrapAPI:
 		bot.bootstrapGuild(cmd)
 
+	case internal.GoodbyeAPI:
+		bot.goodbyeGuild(cmd)
+
 	case internal.SpinupAPI:
 		bot.spinupServer(cmd)
 
@@ -177,9 +182,7 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 		return
 	}
 
-	if !internal.Contains(gameList, spec.Name) {
-		gameList = append(gameList, spec.Name)
-	} else if !args.Overwrite {
+	if internal.Contains(gameList, spec.Name) && !args.Overwrite {
 		fmt.Printf("Registerting %s: aborted, spec already exists\n", spec.Name)
 		bot.followUp(cmd, "🚫 Game %s already registered and overwrite=False", spec.Name)
 		return
@@ -377,7 +380,7 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 		return
 	}
 	extendUserCmdFilter := append(internal.UserCmd, internal.InviteKickCmd...)
-	extendUserCmd := internal.FilterCommandsByName(guildCmd, extendUserCmdFilter)
+	extendUserCmd := internal.CommandsWithNameInList(guildCmd, extendUserCmdFilter)
 
 	err = internal.EnableChannelCommands(sessBearer, cmd.AppID, args.GuildID, channel.ID, extendUserCmd)
 	if err != nil {
@@ -403,35 +406,38 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	sess, err := discordgo.New("Bot " + bot.Token)
+	err := bot._destroyServerInstance(inst)
 	if err != nil {
-		fmt.Println("error discordgo.New /", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	fmt.Printf("Destroy %s: channel delete\n", args.ChannelID)
-	if _, err = sess.ChannelDelete(args.ChannelID); err != nil {
-		fmt.Println("error ChannelDelete /", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	fmt.Printf("Destroy %s: task unregister\n", args.ChannelID)
-	if err = internal.DeregisterTaskFamiliy(inst.TaskFamily); err != nil {
-		fmt.Println("error DeregisterTaskFamiliy /", err)
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	fmt.Printf("Destroy %s: unregister instance\n", args.ChannelID)
-	if err = internal.DynamodbDeleteItem(bot.InstanceTable, inst.ChannelID); err != nil {
-		fmt.Println("error DynamodbDeleteItem /", err)
+		fmt.Println("error _destroyServerInstance /", err)
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	bot.followUp(cmd, "✅ Server destruction done !")
+}
+
+func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) error {
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		return fmt.Errorf("error discordgo.New / %s", err)
+	}
+
+	fmt.Printf("Destroy %s: channel delete\n", inst.ChannelID)
+	if _, err = sess.ChannelDelete(inst.ChannelID); err != nil {
+		return fmt.Errorf("error ChannelDelete / %s", err)
+	}
+
+	fmt.Printf("Destroy %s: task unregister\n", inst.ChannelID)
+	if err = internal.DeregisterTaskFamiliy(inst.TaskFamily); err != nil {
+		return fmt.Errorf("error DeregisterTaskFamiliy / %s", err)
+	}
+
+	fmt.Printf("Destroy %s: unregister instance\n", inst.ChannelID)
+	if err = internal.DynamodbDeleteItem(bot.InstanceTable, inst.ChannelID); err != nil {
+		return fmt.Errorf("error DynamodbDeleteItem / %s", err)
+	}
+
+	return nil
 }
 
 //	Bootstraping
@@ -463,7 +469,7 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 	}
 	fmt.Printf("Bootstraping %s: command creation\n", args.GuildID)
 	if err := internal.CreateGuildsCommands(sess, cmd.AppID, args.GuildID); err != nil {
-		fmt.Println("error SetupLsdc2Commands /", err)
+		fmt.Println("error CreateGuildsCommands /", err)
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -488,7 +494,7 @@ func (bot Backend) bootstrapGuild(cmd internal.BackendCmd) {
 	}
 
 	// Register conf
-	fmt.Printf("Create %s: register instance\n", args.GuildID)
+	fmt.Printf("Bootstraping %s: register instance\n", args.GuildID)
 	if err := internal.DynamodbPutItem(bot.GuildTable, gc); err != nil {
 		fmt.Println("error DynamodbPutItem /", err)
 		bot.followUp(cmd, "🚫 Internal error")
@@ -585,13 +591,13 @@ func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.Boot
 	defer cleanup()
 
 	fmt.Printf("Bootstraping %s: setting commands rights\n", args.GuildID)
-	allCmd, err := internal.GetAllCommands(sess, cmd.AppID, args.GuildID)
+	registeredCmd, err := sess.ApplicationCommands(cmd.AppID, args.GuildID)
 	if err != nil {
-		return fmt.Errorf("GetAllCommands / %s", err)
+		return fmt.Errorf("discordgo.ApplicationCommands / %s", err)
 	}
 
-	adminCmd := internal.FilterCommandsByName(allCmd, internal.AdminCmd)
-	userCmd := internal.FilterCommandsByName(allCmd, internal.UserCmd)
+	adminCmd := internal.CommandsWithNameInList(registeredCmd, internal.AdminCmd)
+	userCmd := internal.CommandsWithNameInList(registeredCmd, internal.UserCmd)
 
 	err = internal.SetupAdminCommands(sess, cmd.AppID, args.GuildID, gc, adminCmd)
 	if err != nil {
@@ -600,6 +606,131 @@ func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.Boot
 	err = internal.SetupUserCommands(sess, cmd.AppID, args.GuildID, gc, userCmd)
 	if err != nil {
 		return fmt.Errorf("SetupUserCommands / %s", err)
+	}
+
+	return nil
+}
+
+//
+//  Goodbyeing
+//
+
+func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.GoodbyeArgs)
+	fmt.Printf("Received goodbye request with args %+v\n", args)
+
+	// Make sure the guild is bootstrapped
+	fmt.Printf("Goodbyeing %s: check if guild exists\n", args.GuildID)
+	gc := internal.GuildConf{}
+	if err := internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gc); err != nil {
+		fmt.Println("error DynamodbGetItem /", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	if gc.GuildID == "" {
+		fmt.Println("Guild does not any entry in bootstrap table")
+		bot.followUp(cmd, "🚫 Guild not does have any entry in bootstrap table")
+		return
+	}
+
+	// Destroying all games
+	fmt.Printf("Goodbyeing %s: destroying games\n", args.GuildID)
+	var err error
+	err = internal.DynamodbScanDo(bot.InstanceTable, func(item map[string]*dynamodb.AttributeValue) bool {
+		inst := internal.ServerInstance{}
+		if err = dynamodbattribute.UnmarshalMap(item, &inst); err != nil {
+			fmt.Println("error DynamodbScanDo / UnmarshalMap /", err)
+			return false // stop paging
+		}
+
+		err = bot._destroyServerInstance(inst)
+		if err != nil {
+			fmt.Println("error DynamodbScanDo / _destroyServerInstance /", err)
+			return false // stop paging
+		}
+
+		return true // keep paging
+	})
+	if err != nil {
+		fmt.Println("error DynamodbScanDo /", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Command de-registering
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		fmt.Println("error discordgo.New /", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	fmt.Printf("Goodbyeing %s: command deletion\n", args.GuildID)
+	if err := internal.DeleteGuildsCommands(sess, cmd.AppID, args.GuildID); err != nil {
+		fmt.Println("error DeleteGuildsCommands /", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	if err := bot._deleteChannels(args, &gc); err != nil {
+		fmt.Println("error _deleteChannels /", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	if err := bot._deleteRoles(args, &gc); err != nil {
+		fmt.Println("error _deleteRoles /", err)
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// De-register conf
+	fmt.Printf("Goodbyeing %s: register instance\n", args.GuildID)
+	if err := internal.DynamodbDeleteItem(bot.GuildTable, gc.GuildID); err != nil {
+		fmt.Println("error DynamodbDeleteItem /", err)
+		bot.followUp(cmd, "🚫 Internal error")
+	}
+
+	bot.followUp(cmd, "✅ Goodbye complete !")
+}
+
+func (bot Backend) _deleteChannels(args internal.GoodbyeArgs, gc *internal.GuildConf) error {
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		return fmt.Errorf("discordgo.New / %s", err)
+	}
+
+	fmt.Printf("Goodbyeing %s: LSDC2 category %s\n", args.GuildID, gc.ChannelCategoryID)
+	_, err = sess.ChannelDelete(gc.ChannelCategoryID)
+	if err != nil {
+		return fmt.Errorf("ChannelDelete / %s", err)
+	}
+	fmt.Printf("Goodbyeing %s: admin channel %s\n", args.GuildID, gc.AdminChannelID)
+	_, err = sess.ChannelDelete(gc.AdminChannelID)
+	if err != nil {
+		return fmt.Errorf("ChannelDelete / %s", err)
+	}
+	fmt.Printf("Goodbyeing %s: welcome channel %s\n", args.GuildID, gc.WelcomeChannelID)
+	_, err = sess.ChannelDelete(gc.WelcomeChannelID)
+	if err != nil {
+		return fmt.Errorf("ChannelDelete / %s", err)
+	}
+
+	return nil
+}
+
+func (bot Backend) _deleteRoles(args internal.GoodbyeArgs, gc *internal.GuildConf) error {
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		return fmt.Errorf("discordgo.New / %s", err)
+	}
+
+	fmt.Printf("Goodbyeing %s: LSDC2 roles\n", args.GuildID)
+	err = sess.GuildRoleDelete(args.GuildID, gc.AdminRoleID)
+	if err != nil {
+		return fmt.Errorf("GuildRoleDelete / %s", err)
+	}
+	err = sess.GuildRoleDelete(args.GuildID, gc.UserRoleID)
+	if err != nil {
+		return fmt.Errorf("GuildRoleDelete / %s", err)
 	}
 
 	return nil
@@ -747,7 +878,7 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 	json.Unmarshal(event.Detail, &task)
 
 	inst := internal.ServerInstance{}
-	err := internal.DynamodbScanFind(bot.InstanceTable, "taskArn", *task.TaskArn, &inst)
+	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "taskArn", *task.TaskArn, &inst)
 	if err != nil {
 		fmt.Println("error DynamodbGetItem /", err)
 		return

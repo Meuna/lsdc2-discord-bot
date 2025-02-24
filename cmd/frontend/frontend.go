@@ -253,7 +253,7 @@ func (bot Frontend) confirm(itnSrc discordgo.Interaction, cmd internal.BackendCm
 		return bot.reply("🚫 Internal error")
 	}
 
-	_componentMessageOrigin = &itnSrc
+	__componentMessageOrigin = &itnSrc
 	itnResp := discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
@@ -369,6 +369,8 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.Lambd
 		return bot.requestNewGameRegister(itn)
 	case internal.BootstrapAPI:
 		return bot.confirmGuildBootstrap(itn)
+	case internal.GoodbyeAPI:
+		return bot.confirmGuildGoodbye(itn)
 	case internal.SpinupAPI:
 		return bot.configureServerCreation(itn)
 	case internal.DestroyAPI:
@@ -395,20 +397,20 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.Lambd
 
 // Very unreliable state persistance between lambda calls
 // If it fail, users can still manually delete the origin message
-var _componentMessageOrigin *discordgo.Interaction
+var __componentMessageOrigin *discordgo.Interaction
 
 func (bot Frontend) routeMessageComponent(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	// Delete the origin message if it exists
-	if _componentMessageOrigin != nil {
+	if __componentMessageOrigin != nil {
 		sess, err := discordgo.New("Bot " + bot.Token)
 		if err != nil {
 			fmt.Println("error discordgo.New /", err)
 		}
-		err = sess.InteractionResponseDelete(_componentMessageOrigin)
+		err = sess.InteractionResponseDelete(__componentMessageOrigin)
 		if err != nil {
 			fmt.Println("error InteractionResponseDelete /", err)
 		}
-		_componentMessageOrigin = nil
+		__componentMessageOrigin = nil
 	}
 
 	mcd := itn.MessageComponentData()
@@ -526,13 +528,22 @@ func (bot Frontend) confirmGuildBootstrap(itn discordgo.Interaction) (events.API
 	return bot.confirm(itn, cmd, "Confirm LSDC2 bootstrap for your guild ?")
 }
 
+func (bot Frontend) confirmGuildGoodbye(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	cmd := internal.BackendCmd{
+		Args: &internal.GoodbyeArgs{
+			GuildID: itn.GuildID,
+		},
+	}
+	return bot.confirm(itn, cmd, "You will not be able to retrieve savegames. Are you sure you want to say goodbye ?")
+}
+
 func (bot Frontend) confirmServerDestruction(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	serverName := acd.Options[0].StringValue()
 
 	// Retrieve the chanel ID
 	inst := internal.ServerInstance{}
-	err := internal.DynamodbScanFind(bot.InstanceTable, "name", serverName, &inst)
+	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "name", serverName, &inst)
 	if err != nil {
 		fmt.Println("error DynamodbScanFind /", err)
 		return bot.reply("🚫 Internal error")

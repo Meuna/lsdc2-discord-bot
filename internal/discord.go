@@ -339,7 +339,7 @@ func EnableChannelCommands(sess *discordgo.Session, appID string, guildID string
 // Commands helpers
 //
 
-var guildsCommands = []*discordgo.ApplicationCommand{
+var __guildsCommands = []*discordgo.ApplicationCommand{
 	{
 		Name:        SpinupAPI,
 		Description: "Start a new server instance",
@@ -411,7 +411,7 @@ var guildsCommands = []*discordgo.ApplicationCommand{
 }
 
 func CreateGuildsCommands(sess *discordgo.Session, appID string, guildID string) error {
-	for _, cmd := range guildsCommands {
+	for _, cmd := range __guildsCommands {
 		fmt.Printf("Bootstraping %s: %s command\n", guildID, cmd.Name)
 		_, err := sess.ApplicationCommandCreate(appID, guildID, cmd)
 		if err != nil {
@@ -421,19 +421,22 @@ func CreateGuildsCommands(sess *discordgo.Session, appID string, guildID string)
 	return nil
 }
 
-func GetAllCommands(sess *discordgo.Session, appID string, guildID string) ([]*discordgo.ApplicationCommand, error) {
-	globalCmd, err := sess.ApplicationCommands(appID, "")
+func DeleteGuildsCommands(sess *discordgo.Session, appID string, guildID string) error {
+	registeredCmd, err := sess.ApplicationCommands(appID, guildID)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("discordgo.ApplicationCommands / %s", err)
 	}
-	guildCmd, err := sess.ApplicationCommands(appID, guildID)
-	if err != nil {
-		return nil, err
+	for _, cmd := range registeredCmd {
+		fmt.Printf("Goodbyeing %s: %s command\n", guildID, cmd.Name)
+		err := sess.ApplicationCommandDelete(appID, guildID, cmd.ID)
+		if err != nil {
+			return err
+		}
 	}
-	return append(globalCmd, guildCmd...), nil
+	return nil
 }
 
-func FilterCommandsByName(cmd []*discordgo.ApplicationCommand, names []string) []*discordgo.ApplicationCommand {
+func CommandsWithNameInList(cmd []*discordgo.ApplicationCommand, names []string) []*discordgo.ApplicationCommand {
 	filteredCmd := []*discordgo.ApplicationCommand{}
 	for _, cmd := range cmd {
 		if Contains(names, cmd.Name) {

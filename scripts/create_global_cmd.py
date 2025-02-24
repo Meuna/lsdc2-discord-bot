@@ -28,6 +28,17 @@ json_bootstrap = {
 r = requests.post(url, headers=headers, json=json_bootstrap)
 print("BOOSTRAP result: ", r.content)
 
+json_goodbyeguild = {
+    "name": "goodbye-guild",
+    "type": CHAT_INPUT,
+    "description": "Remove everything related to LSDC2 bot from your guild",
+    "integration_types": [GUILD_INSTALL],
+    "contexts": [CTX_GUILD],
+    "default_member_permissions": ADMINISTRATOR_PERM,
+}
+r = requests.post(url, headers=headers, json=json_goodbyeguild)
+print("BOOSTRAP result: ", r.content)
+
 json_registergame = {
     "name": "register-game",
     "type": CHAT_INPUT,

@@ -174,7 +174,7 @@ func DynamodbDeleteItem(tableName string, key string) error {
 	return err
 }
 
-func DynamodbScanFind(tableName string, key string, value string, out interface{}) error {
+func DynamodbScanDo(tableName string, fn func(map[string]*dynamodb.AttributeValue) bool) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}))
@@ -184,17 +184,28 @@ func DynamodbScanFind(tableName string, key string, value string, out interface{
 		TableName: aws.String(tableName),
 	}, func(page *dynamodb.ScanOutput, last bool) bool {
 		for _, item := range page.Items {
-			if val, ok := item[key]; ok {
-				if *val.S == value {
-					dynamodbattribute.UnmarshalMap(item, out)
-					return false
-				}
+			keep_paging := fn(item)
+			if !keep_paging {
+				return false // stop paging
 			}
 		}
 
 		return true // keep paging
 	})
 
+	return err
+}
+
+func DynamodbScanFindFirst(tableName string, key string, value string, out interface{}) (err error) {
+	err = DynamodbScanDo(tableName, func(item map[string]*dynamodb.AttributeValue) bool {
+		if val, ok := item[key]; ok {
+			if *val.S == value {
+				err = dynamodbattribute.UnmarshalMap(item, out)
+				return false // stop paging
+			}
+		}
+		return true // keep paging
+	})
 	return err
 }
 
