@@ -10,6 +10,7 @@ import (
 const (
 	RegisterGameAPI = "register-game"
 	BootstrapAPI    = "bootstrap"
+	GoodbyeAPI      = "goodbye-guild"
 	SpinupAPI       = "spinup"
 	DestroyAPI      = "destroy"
 	InviteAPI       = "invite"
@@ -22,7 +23,7 @@ const (
 )
 
 var (
-	OwnerCmd      = []string{RegisterGameAPI, BootstrapAPI}
+	OwnerCmd      = []string{RegisterGameAPI, BootstrapAPI, GoodbyeAPI}
 	AdminCmd      = []string{SpinupAPI, DestroyAPI, InviteAPI, KickAPI}
 	InviteKickCmd = []string{InviteAPI, KickAPI}
 	UserCmd       = []string{StartAPI, StopAPI, StatusAPI, DownloadAPI, UploadAPI}
@@ -45,6 +46,8 @@ func (cmd BackendCmd) Action() string {
 		return RegisterGameAPI
 	case *BootstrapArgs, BootstrapArgs:
 		return BootstrapAPI
+	case *GoodbyeArgs, GoodbyeArgs:
+		return GoodbyeAPI
 	case *SpinupArgs, SpinupArgs:
 		return SpinupAPI
 	case *DestroyArgs, DestroyArgs:
@@ -77,6 +80,8 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 		cmd.Args = &RegisterGameArgs{}
 	case BootstrapAPI:
 		cmd.Args = &BootstrapArgs{}
+	case GoodbyeAPI:
+		cmd.Args = &GoodbyeArgs{}
 	case SpinupAPI:
 		cmd.Args = &SpinupArgs{}
 	case DestroyAPI:
@@ -110,6 +115,10 @@ type RegisterGameArgs struct {
 }
 
 type BootstrapArgs struct {
+	GuildID string
+}
+
+type GoodbyeArgs struct {
 	GuildID string
 }
 
