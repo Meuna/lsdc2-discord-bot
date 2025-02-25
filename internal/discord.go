@@ -345,10 +345,11 @@ var __guildsCommands = []*discordgo.ApplicationCommand{
 		Description: "Start a new server instance",
 		Options: []*discordgo.ApplicationCommandOption{
 			{
-				Name:        "game-type",
-				Description: "Game type to start",
-				Required:    true,
-				Type:        discordgo.ApplicationCommandOptionString,
+				Name:         "game-type",
+				Description:  "Game type to start",
+				Required:     true,
+				Type:         discordgo.ApplicationCommandOptionString,
+				Autocomplete: true,
 			},
 		},
 	},

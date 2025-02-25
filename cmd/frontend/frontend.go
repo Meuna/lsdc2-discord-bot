@@ -18,6 +18,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -237,6 +239,20 @@ func (bot Frontend) replyLink(url string, label string, msg string, fmtarg ...in
 					},
 				},
 			},
+		},
+	}
+	jsonBytes, err := json.Marshal(itnResp)
+	if err != nil {
+		return internal.Error500(), fmt.Errorf("marshal / %s", err)
+	}
+	return internal.Json200(string(jsonBytes[:])), nil
+}
+
+func (bot Frontend) replyAutocomplete(choices []*discordgo.ApplicationCommandOptionChoice) (events.APIGatewayProxyResponse, error) {
+	itnResp := discordgo.InteractionResponse{
+		Type: discordgo.InteractionApplicationCommandAutocompleteResult,
+		Data: &discordgo.InteractionResponseData{
+			Choices: choices,
 		},
 	}
 	jsonBytes, err := json.Marshal(itnResp)
@@ -466,7 +482,15 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 }
 
 func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
-	return bot.reply("🚫 Not implemented yet")
+	acd := itn.ApplicationCommandData()
+	fmt.Printf("Routing '%s' autocomplete\n", acd.Name)
+
+	switch acd.Name {
+	case internal.SpinupAPI:
+		return bot.autocompleteSpinup()
+	default:
+		return internal.Error500(), fmt.Errorf("unexpected autocomplete request for '%s'", acd.Name)
+	}
 }
 
 //
@@ -844,4 +868,41 @@ func (bot Frontend) savegameUpload(channelID string, domainName string) (events.
 		RawQuery: values.Encode(),
 	}
 	return bot.replyLink(url.String(), "Open upload page", "%s savegame", inst.Name)
+}
+
+// Cache of the choices between lambda calls
+// A bit hacky but it's a cheap way to avoid a table scan at each call
+var __choicesCache []*discordgo.ApplicationCommandOptionChoice
+
+func (bot Frontend) autocompleteSpinup() (events.APIGatewayProxyResponse, error) {
+	// Fast-track the cached reply
+	if __choicesCache != nil {
+		return bot.replyAutocomplete(__choicesCache)
+	}
+
+	choices := []*discordgo.ApplicationCommandOptionChoice{}
+
+	var innerErr error
+	outerErr := internal.DynamodbScanDo(bot.SpecTable, func(item map[string]*dynamodb.AttributeValue) bool {
+		spec := internal.ServerSpec{}
+		if innerErr = dynamodbattribute.UnmarshalMap(item, &spec); innerErr != nil {
+			innerErr = fmt.Errorf("error DynamodbScanDo / UnmarshalMap / %s", innerErr)
+			return false // stop paging
+		}
+		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
+			Name:  spec.Name, // This is the value displayed to the user
+			Value: "",        // This I don't know but it need be set. Any string value seems accepted.
+		})
+		return true // continue paging
+	})
+	if innerErr != nil {
+		return internal.Error500(), innerErr
+	}
+	if outerErr != nil {
+		return internal.Error500(), fmt.Errorf("error DynamodbScanDo / %s", outerErr)
+	}
+
+	__choicesCache = choices
+
+	return bot.replyAutocomplete(choices)
 }
