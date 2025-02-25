@@ -2,7 +2,6 @@ import requests
 import getpass
 
 app = input("Application id: ")
-guild = input("Guild id: ")
 token = getpass.getpass(prompt="Bot token: ")
 
 headers = {"Authorization": f"Bot {token}"}

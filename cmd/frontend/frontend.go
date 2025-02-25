@@ -549,7 +549,7 @@ func (bot Frontend) confirmWelcomeGuild(itn discordgo.Interaction) (events.APIGa
 			GuildID: itn.GuildID,
 		},
 	}
-	return bot.confirm(itn, cmd, "Do you confirm you welcome LSDC2 bot, including its role and channels in your guild ?")
+	return bot.confirm(itn, cmd, "Do you confirm you welcome LSDC2 bot, including its roles and channels in your guild ?")
 }
 
 func (bot Frontend) confirmGuildGoodbye(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {

@@ -26,7 +26,7 @@ json_welcomeguild = {
     "default_member_permissions": ADMINISTRATOR_PERM,
 }
 r = requests.post(url, headers=headers, json=json_welcomeguild)
-print("BOOSTRAP result: ", r.content)
+print("WELCOME-GUILD result: ", r.content)
 
 json_goodbyeguild = {
     "name": "goodbye-guild",
@@ -37,7 +37,7 @@ json_goodbyeguild = {
     "default_member_permissions": ADMINISTRATOR_PERM,
 }
 r = requests.post(url, headers=headers, json=json_goodbyeguild)
-print("BOOSTRAP result: ", r.content)
+print("GOODBYE-GUILD result: ", r.content)
 
 json_registergame = {
     "name": "register-game",
