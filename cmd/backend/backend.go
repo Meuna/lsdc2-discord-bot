@@ -11,8 +11,6 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/bwmarrin/discordgo"
 )
@@ -635,21 +633,12 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 
 	// Destroying all games
 	fmt.Printf("Goodbyeing %s: destroying games\n", args.GuildID)
-	var err error
-	err = internal.DynamodbScanDo(bot.InstanceTable, func(item map[string]*dynamodb.AttributeValue) bool {
-		inst := internal.ServerInstance{}
-		if err = dynamodbattribute.UnmarshalMap(item, &inst); err != nil {
-			fmt.Println("error DynamodbScanDo / UnmarshalMap /", err)
-			return false // stop paging
-		}
-
-		err = bot._destroyServerInstance(inst)
+	err := internal.DynamodbScanDo(bot.InstanceTable, func(item internal.ServerInstance) (bool, error) {
+		err := bot._destroyServerInstance(item)
 		if err != nil {
-			fmt.Println("error DynamodbScanDo / _destroyServerInstance /", err)
-			return false // stop paging
+			return false, fmt.Errorf("error _destroyServerInstance / %s", err)
 		}
-
-		return true // keep paging
+		return true, nil // keep paging
 	})
 	if err != nil {
 		fmt.Println("error DynamodbScanDo /", err)

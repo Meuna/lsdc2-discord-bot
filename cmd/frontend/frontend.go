@@ -18,8 +18,6 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -880,26 +878,17 @@ func (bot Frontend) autocompleteSpinup() (events.APIGatewayProxyResponse, error)
 		return bot.replyAutocomplete(__choicesCache)
 	}
 
-	choices := []*discordgo.ApplicationCommandOptionChoice{}
-
-	var innerErr error
-	outerErr := internal.DynamodbScanDo(bot.SpecTable, func(item map[string]*dynamodb.AttributeValue) bool {
-		spec := internal.ServerSpec{}
-		if innerErr = dynamodbattribute.UnmarshalMap(item, &spec); innerErr != nil {
-			innerErr = fmt.Errorf("error DynamodbScanDo / UnmarshalMap / %s", innerErr)
-			return false // stop paging
-		}
-		choices = append(choices, &discordgo.ApplicationCommandOptionChoice{
-			Name:  spec.Name, // This is the value displayed to the user
-			Value: "",        // This I don't know but it need be set. Any string value seems accepted.
-		})
-		return true // continue paging
-	})
-	if innerErr != nil {
-		return internal.Error500(), innerErr
+	gameList, err := internal.DynamodbScanAttr(bot.SpecTable, "key")
+	if err != nil {
+		return internal.Error500(), fmt.Errorf("DynamodbScanAttr / %s", err)
 	}
-	if outerErr != nil {
-		return internal.Error500(), fmt.Errorf("error DynamodbScanDo / %s", outerErr)
+
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(gameList))
+	for idx, item := range gameList {
+		choices[idx] = &discordgo.ApplicationCommandOptionChoice{
+			Name:  item, // This is the value displayed to the user
+			Value: item, // This is the value sent to the command
+		}
 	}
 
 	__choicesCache = choices

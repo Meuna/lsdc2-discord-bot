@@ -174,39 +174,68 @@ func DynamodbDeleteItem(tableName string, key string) error {
 	return err
 }
 
-func DynamodbScanDo(tableName string, fn func(map[string]*dynamodb.AttributeValue) bool) error {
+func DynamodbScanDo[T any](tableName string, fn func(typedItem T) (bool, error)) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}))
 	svc := dynamodb.New(sess)
 
-	err := svc.ScanPages(&dynamodb.ScanInput{
+	var innerErr error
+	outerErr := svc.ScanPages(&dynamodb.ScanInput{
 		TableName: aws.String(tableName),
 	}, func(page *dynamodb.ScanOutput, last bool) bool {
+		var keepPaging bool
+		var typedItem T
 		for _, item := range page.Items {
-			keep_paging := fn(item)
-			if !keep_paging {
+			innerErr = dynamodbattribute.UnmarshalMap(item, &typedItem)
+			if innerErr != nil {
+				innerErr = fmt.Errorf("ScanPages / UnmarshalMap / %s", innerErr)
+				return false // stop paging
+			}
+			keepPaging, innerErr = fn(typedItem)
+			if innerErr != nil {
+				innerErr = fmt.Errorf("ScanPages / fn / %s", innerErr)
+				return false // stop paging
+			}
+			if !keepPaging {
 				return false // stop paging
 			}
 		}
 
 		return true // keep paging
 	})
+	if innerErr != nil {
+		return innerErr
+	}
 
-	return err
+	return outerErr
 }
 
 func DynamodbScanFindFirst(tableName string, key string, value string, out interface{}) (err error) {
-	err = DynamodbScanDo(tableName, func(item map[string]*dynamodb.AttributeValue) bool {
-		if val, ok := item[key]; ok {
-			if *val.S == value {
-				err = dynamodbattribute.UnmarshalMap(item, out)
-				return false // stop paging
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+	svc := dynamodb.New(sess)
+
+	var innerErr error
+	outerErr := svc.ScanPages(&dynamodb.ScanInput{
+		TableName: aws.String(tableName),
+	}, func(page *dynamodb.ScanOutput, last bool) bool {
+		for _, item := range page.Items {
+			if val, ok := item[key]; ok {
+				if *val.S == value {
+					innerErr = dynamodbattribute.UnmarshalMap(item, out)
+					return false // stop paging
+				}
 			}
 		}
 		return true // keep paging
 	})
-	return err
+	if innerErr != nil {
+		return fmt.Errorf("ScanPages / UnmarshalMap / %s", innerErr)
+	}
+
+	return outerErr
 }
 
 func DynamodbScanAttr(tableName string, key string) ([]string, error) {
