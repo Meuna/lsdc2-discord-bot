@@ -189,12 +189,12 @@ func DynamodbScanDo[T any](tableName string, fn func(typedItem T) (bool, error))
 		for _, item := range page.Items {
 			innerErr = dynamodbattribute.UnmarshalMap(item, &typedItem)
 			if innerErr != nil {
-				innerErr = fmt.Errorf("ScanPages / UnmarshalMap / %s", innerErr)
+				innerErr = fmt.Errorf("ScanPages / UnmarshalMap / %w", innerErr)
 				return false // stop paging
 			}
 			keepPaging, innerErr = fn(typedItem)
 			if innerErr != nil {
-				innerErr = fmt.Errorf("ScanPages / fn / %s", innerErr)
+				innerErr = fmt.Errorf("ScanPages / fn / %w", innerErr)
 				return false // stop paging
 			}
 			if !keepPaging {
@@ -232,7 +232,7 @@ func DynamodbScanFindFirst(tableName string, key string, value string, out inter
 		return true // keep paging
 	})
 	if innerErr != nil {
-		return fmt.Errorf("ScanPages / UnmarshalMap / %s", innerErr)
+		return fmt.Errorf("ScanPages / UnmarshalMap / %w", innerErr)
 	}
 
 	return outerErr

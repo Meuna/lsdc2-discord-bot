@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/meuna/lsdc2-discord-bot/internal"
+	"go.uber.org/zap"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -35,7 +36,7 @@ func handleEvent(ctx context.Context, event Event) error {
 	} else if event.CloudWatchEvent.DetailType != "" {
 		bot.handleCloudWatchEvent(event.CloudWatchEvent)
 	} else {
-		fmt.Println("Could not discriminate event type")
+		bot.Logger.Error("could not discriminate event type")
 	}
 
 	// We make the bot unable to fail: events will never get back to the queue
@@ -43,7 +44,7 @@ func handleEvent(ctx context.Context, event Event) error {
 }
 
 func InitBackend() Backend {
-	bot, err := internal.ParseEnv()
+	bot, err := internal.InitBot()
 	if err != nil {
 		panic(err)
 	}
@@ -55,12 +56,16 @@ type Backend struct {
 }
 
 func (bot Backend) handleSQSEvent(event events.SQSEvent) {
-	fmt.Println("Received SQS event")
+	bot.Logger.Info("received SQS event")
 
 	for _, msg := range event.Records {
 		cmd, err := internal.UnmarshallQueuedAction(msg)
 		if err != nil {
-			fmt.Printf("error internal.UnmarshallQueuedAction for msg %+v / %s\n", msg, err)
+			bot.Logger.Error("error in handleSQSEvent",
+				zap.String("culprit", "UnmarshallQueuedAction"),
+				zap.Any("msg", msg),
+				zap.Error(err),
+			)
 		} else {
 			bot.routeFcn(cmd)
 		}
@@ -68,13 +73,13 @@ func (bot Backend) handleSQSEvent(event events.SQSEvent) {
 }
 
 func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
-	fmt.Printf("Received '%s' CloudWatch event\n", event.DetailType)
+	bot.Logger.Info("received CloudWatch event", zap.String("detailType", event.DetailType))
 
 	switch event.DetailType {
 	case "ECS Task State Change":
 		bot.notifyTaskUpdate(event)
 	default:
-		fmt.Printf("%s event not handled\n", event.DetailType)
+		bot.Logger.Error("event not handled", zap.String("event", event.DetailType))
 	}
 }
 
@@ -85,7 +90,7 @@ func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
 func (bot Backend) message(channelID string, msg string, fmtarg ...interface{}) {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		fmt.Println("error discordgo.New /", err)
+		bot.Logger.Error("error in message", zap.String("culprit", "discordgo.New"), zap.Error(err))
 		return
 	}
 
@@ -93,7 +98,7 @@ func (bot Backend) message(channelID string, msg string, fmtarg ...interface{}) 
 		Content: fmt.Sprintf(msg, fmtarg...),
 	})
 	if err != nil {
-		fmt.Println("error ChannelMessageSendComplex /", err)
+		bot.Logger.Error("error in message", zap.String("culprit", "ChannelMessageSendComplex"), zap.Error(err))
 		return
 	}
 }
@@ -101,7 +106,7 @@ func (bot Backend) message(channelID string, msg string, fmtarg ...interface{}) 
 func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...interface{}) {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		fmt.Println("error discordgo.New /", err)
+		bot.Logger.Error("error in followUp", zap.String("culprit", "discordgo.New"), zap.Error(err))
 		return
 	}
 
@@ -113,7 +118,7 @@ func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...inter
 		Content: internal.Pointer(fmt.Sprintf(msg, fmtarg...)),
 	})
 	if err != nil {
-		fmt.Println("error InteractionResponseEdit /", err)
+		bot.Logger.Error("error in followUp", zap.String("culprit", "InteractionResponseEdit"), zap.Error(err))
 		return
 	}
 }
@@ -146,7 +151,7 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 		bot.kickMember(cmd)
 
 	default:
-		fmt.Printf("Unrecognized function %s\n", cmd.Action())
+		bot.Logger.Error("unrecognized function", zap.String("action", cmd.Action()))
 	}
 }
 
@@ -154,11 +159,11 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 
 func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.RegisterGameArgs)
-	fmt.Printf("Received game register request with args %+v\n", args)
+	bot.Logger.Debug("received game register request", zap.Any("args", args))
 
 	spec, err := bot._getSpec(cmd, args)
 	if err != nil {
-		fmt.Println("error _getSpec /", err)
+		bot.Logger.Error("error in registerGame", zap.String("culprit", "_getSpec"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -166,45 +171,45 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	// Check spec is not missing any mandatory field
 	missingFields := spec.MissingField()
 	if len(missingFields) > 0 {
-		fmt.Printf("error spec is missing field %s\n", missingFields)
+		bot.Logger.Error("register game is missing fields", zap.Strings("missingFields", missingFields))
 		bot.followUp(cmd, "🚫 Spec if missing field %s", missingFields)
 		return
 	}
 
 	// Check existing spec and abort/cleanup if necessary
-	fmt.Printf("Registerting %s: scan game list\n", spec.Name)
+	bot.Logger.Debug("registering game: scan game list", zap.String("gameName", spec.Name))
 	gameList, err := internal.DynamodbScanAttr(bot.SpecTable, "key")
 	if err != nil {
-		fmt.Println("error internal.DynamodbScanAttr /", err)
+		bot.Logger.Error("error in registerGame", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	if internal.Contains(gameList, spec.Name) && !args.Overwrite {
-		fmt.Printf("Registerting %s: aborted, spec already exists\n", spec.Name)
+		bot.Logger.Info("game already registered", zap.String("gameName", spec.Name))
 		bot.followUp(cmd, "🚫 Game %s already registered and overwrite=False", spec.Name)
 		return
 	}
 
 	// Security group creation
-	fmt.Printf("Registerting %s: ensure previous security group deletion\n", spec.Name)
+	bot.Logger.Debug("registering game: ensure previous security group deletion", zap.String("gameName", spec.Name))
 	if err = internal.EnsureAndWaitSecurityGroupDeletion(spec.Name, bot.Lsdc2Stack); err != nil {
-		fmt.Println("error EnsureAndWaitSecurityGroupDeletion /", err)
+		bot.Logger.Error("error in registerGame", zap.String("culprit", "EnsureAndWaitSecurityGroupDeletion"), zap.Error(err))
 	}
-	fmt.Printf("Registerting %s: create security group\n", spec.Name)
+	bot.Logger.Debug("registering game: create security group", zap.String("gameName", spec.Name))
 	sgID, err := internal.CreateSecurityGroup(spec, bot.Lsdc2Stack)
 	if err != nil {
-		fmt.Println("error CreateSecurityGroup /", err)
+		bot.Logger.Error("error in registerGame", zap.String("culprit", "CreateSecurityGroup"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 	spec.SecurityGroup = sgID
 
 	// Finally, persist the spec in db
-	fmt.Printf("Registerting %s: dp register\n", spec.Name)
+	bot.Logger.Debug("registering game: persist spec", zap.String("gameName", spec.Name))
 	err = internal.DynamodbPutItem(bot.SpecTable, spec)
 	if err != nil {
-		fmt.Println("error DynamodbPutItem /", err)
+		bot.Logger.Error("error in registerGame", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -220,17 +225,17 @@ func (bot Backend) _getSpec(cmd internal.BackendCmd, args internal.RegisterGameA
 		var resp *http.Response
 
 		// Spec is in args.SpecUrl
-		fmt.Printf("Registerting: spec download %s\n", args.SpecUrl)
+		bot.Logger.Debug("registerting: spec download", zap.String("specUrl", args.SpecUrl))
 		resp, err = http.Get(args.SpecUrl)
 		if err != nil {
-			err = fmt.Errorf("http.Get / %s", err)
+			err = fmt.Errorf("http.Get / %w", err)
 			return
 		}
 		defer resp.Body.Close()
 
 		jsonSpec, err = io.ReadAll(resp.Body)
 		if err != nil {
-			err = fmt.Errorf("io.ReadAll / %s", err)
+			err = fmt.Errorf("io.ReadAll / %w", err)
 			return
 		}
 	} else if len(args.Spec) > 0 {
@@ -242,9 +247,9 @@ func (bot Backend) _getSpec(cmd internal.BackendCmd, args internal.RegisterGameA
 	}
 
 	// Parse spec
-	fmt.Printf("Registerting: parse spec\n")
+	bot.Logger.Debug("registerting: parse spec")
 	if err = json.Unmarshal(jsonSpec, &spec); err != nil {
-		err = fmt.Errorf("json.Unmarshal / %s", err)
+		err = fmt.Errorf("json.Unmarshal / %w", err)
 		return
 	}
 
@@ -255,12 +260,12 @@ func (bot Backend) _getSpec(cmd internal.BackendCmd, args internal.RegisterGameA
 
 func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.SpinupArgs)
-	fmt.Printf("Received server spinup request with args %+v\n", args)
+	bot.Logger.Debug("received server spinup request", zap.Any("args", args))
 
 	// Get spec
 	spec, err := bot._getSpecAndIncreaseCount(cmd, args)
 	if err != nil {
-		fmt.Println("error _getSpecAndIncreaseCount /", err)
+		bot.Logger.Error("error in spinupServer", zap.String("culprit", "_getSpecAndIncreaseCount"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -271,13 +276,13 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	// Create server channel
 	chanID, err := bot._createServerChannel(cmd, args, instName)
 	if err != nil {
-		fmt.Println("error _createServerChannel /", err)
+		bot.Logger.Error("error in spinupServer", zap.String("culprit", "_createServerChannel"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Register ECS task
-	fmt.Printf("Spinup %s/%s: task register\n", args.GuildID, args.GameName)
+	bot.Logger.Debug("spinupServer: register ECS task", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	if spec.EnvMap == nil {
 		spec.EnvMap = map[string]string{}
 	}
@@ -287,13 +292,13 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 		spec.EnvMap[key] = value
 	}
 	if err = internal.RegisterTask(taskFamily, spec, bot.Lsdc2Stack); err != nil {
-		fmt.Println("error RegisterTask /", err)
+		bot.Logger.Error("error in spinupServer", zap.String("culprit", "RegisterTask"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// And register instance
-	fmt.Printf("Spinup %s/%s: register instance\n", args.GuildID, args.GameName)
+	bot.Logger.Debug("spinupServer: register instance", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	inst := internal.ServerInstance{
 		Name:          instName,
 		SpecName:      spec.Name,
@@ -302,7 +307,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 		SecurityGroup: spec.SecurityGroup,
 	}
 	if err = internal.DynamodbPutItem(bot.InstanceTable, inst); err != nil {
-		fmt.Println("error DynamodbPutItem /", err)
+		bot.Logger.Error("error in spinupServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -311,9 +316,9 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 }
 
 func (bot Backend) _getSpecAndIncreaseCount(cmd internal.BackendCmd, args internal.SpinupArgs) (spec internal.ServerSpec, err error) {
-	fmt.Printf("Spinup %s/%s: get spec\n", args.GuildID, args.GameName)
+	bot.Logger.Debug("spinupServer: get spec", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	if err = internal.DynamodbGetItem(bot.SpecTable, args.GameName, &spec); err != nil {
-		err = fmt.Errorf("DynamodbGetItem / %s", err)
+		err = fmt.Errorf("DynamodbGetItem / %w", err)
 		return
 	}
 	if spec.Name == "" {
@@ -321,10 +326,10 @@ func (bot Backend) _getSpecAndIncreaseCount(cmd internal.BackendCmd, args intern
 		return
 	}
 
-	fmt.Printf("Spinup %s/%s: increment spec count\n", args.GuildID, args.GameName)
+	bot.Logger.Debug("spinupServer: increment spec count", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	spec.ServerCount = spec.ServerCount + 1
 	if err = internal.DynamodbPutItem(bot.SpecTable, spec); err != nil {
-		err = fmt.Errorf("DynamodbPutItem / %s", err)
+		err = fmt.Errorf("DynamodbPutItem / %w", err)
 		return
 	}
 
@@ -333,20 +338,20 @@ func (bot Backend) _getSpecAndIncreaseCount(cmd internal.BackendCmd, args intern
 
 func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.SpinupArgs, instName string) (chanID string, err error) {
 	// Retrieve guild conf
-	fmt.Printf("Spinup %s/%s: get guild conf\n", args.GuildID, args.GameName)
+	bot.Logger.Debug("spinupServer: get guild conf", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	gc := internal.GuildConf{}
 	if err = internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gc); err != nil {
-		err = fmt.Errorf("DynamodbGetItem / %s", err)
+		err = fmt.Errorf("DynamodbGetItem / %w", err)
 		return
 	}
 
 	// Create chan
 	sessBot, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		err = fmt.Errorf("discordgo.New / %s", err)
+		err = fmt.Errorf("discordgo.New / %w", err)
 		return
 	}
-	fmt.Printf("Spinup %s/%s: chan creation\n", args.GuildID, args.GameName)
+	bot.Logger.Debug("spinupServer: create channel", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	channel, err := sessBot.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
 		Name:     instName,
 		Type:     discordgo.ChannelTypeGuildText,
@@ -358,7 +363,7 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 		},
 	})
 	if err != nil {
-		err = fmt.Errorf("GuildChannelCreateComplex / %s", err)
+		err = fmt.Errorf("GuildChannelCreateComplex / %w", err)
 		return
 	}
 
@@ -366,15 +371,15 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 	scope := "applications.commands.permissions.update applications.commands.update"
 	sessBearer, cleanup, err := internal.BearerSession(bot.ClientID, bot.ClientSecret, scope)
 	if err != nil {
-		err = fmt.Errorf("BearerSession / %s", err)
+		err = fmt.Errorf("BearerSession / %w", err)
 		return
 	}
 	defer cleanup()
 
-	fmt.Printf("Spinup %s: setting command rights on channel\n", args.GuildID)
+	bot.Logger.Debug("spinupServer: setting command rights on channel", zap.String("guildID", args.GuildID))
 	guildCmd, err := sessBearer.ApplicationCommands(cmd.AppID, args.GuildID)
 	if err != nil {
-		err = fmt.Errorf("ApplicationCommands / %s", err)
+		err = fmt.Errorf("ApplicationCommands / %w", err)
 		return
 	}
 	extendUserCmdFilter := append(internal.UserCmd, internal.InviteKickCmd...)
@@ -382,7 +387,7 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 
 	err = internal.EnableChannelCommands(sessBearer, cmd.AppID, args.GuildID, channel.ID, extendUserCmd)
 	if err != nil {
-		err = fmt.Errorf("EnableChannelCommands / %s", err)
+		err = fmt.Errorf("EnableChannelCommands / %w", err)
 		return
 	}
 
@@ -394,19 +399,19 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 
 func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.DestroyArgs)
-	fmt.Printf("Received server creation request with args %+v\n", args)
+	bot.Logger.Debug("received server destroy request", zap.Any("args", args))
 
-	fmt.Printf("Destroy %s: get inst\n", args.ChannelID)
+	bot.Logger.Debug("destroy: get inst", zap.String("channelID", args.ChannelID))
 	inst := internal.ServerInstance{}
 	if err := internal.DynamodbGetItem(bot.InstanceTable, args.ChannelID, &inst); err != nil {
-		fmt.Println("error DynamodbGetItem /", err)
+		bot.Logger.Error("error in destroyServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	err := bot._destroyServerInstance(inst)
 	if err != nil {
-		fmt.Println("error _destroyServerInstance /", err)
+		bot.Logger.Error("error in destroyServer", zap.String("culprit", "_destroyServerInstance"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -417,22 +422,22 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		return fmt.Errorf("error discordgo.New / %s", err)
+		return fmt.Errorf("discordgo.New / %w", err)
 	}
 
-	fmt.Printf("Destroy %s: channel delete\n", inst.ChannelID)
+	bot.Logger.Debug("sestroy: get guild conf", zap.String("channelID", inst.ChannelID))
 	if _, err = sess.ChannelDelete(inst.ChannelID); err != nil {
-		return fmt.Errorf("error ChannelDelete / %s", err)
+		return fmt.Errorf("ChannelDelete / %w", err)
 	}
 
-	fmt.Printf("Destroy %s: task unregister\n", inst.ChannelID)
+	bot.Logger.Debug("destroy: unregister task", zap.String("channelID", inst.ChannelID))
 	if err = internal.DeregisterTaskFamiliy(inst.TaskFamily); err != nil {
-		return fmt.Errorf("error DeregisterTaskFamiliy / %s", err)
+		return fmt.Errorf("DeregisterTaskFamiliy / %w", err)
 	}
 
-	fmt.Printf("Destroy %s: unregister instance\n", inst.ChannelID)
+	bot.Logger.Debug("destroy: unregister instance", zap.String("channelID", inst.ChannelID))
 	if err = internal.DynamodbDeleteItem(bot.InstanceTable, inst.ChannelID); err != nil {
-		return fmt.Errorf("error DynamodbDeleteItem / %s", err)
+		return fmt.Errorf("DynamodbDeleteItem / %w", err)
 	}
 
 	return nil
@@ -442,32 +447,32 @@ func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) error {
 
 func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.WelcomeArgs)
-	fmt.Printf("Received welcoming request with args %+v\n", args)
+	bot.Logger.Debug("received welcoming request", zap.Any("args", args))
 
 	// Make sure the guild is not bootstrapped
-	fmt.Printf("Welcoming %s: check if guild already exists\n", args.GuildID)
+	bot.Logger.Debug("welcoming: check if guild already exists", zap.String("guildID", args.GuildID))
 	gcCheck := internal.GuildConf{}
 	if err := internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gcCheck); err != nil {
-		fmt.Println("error DynamodbGetItem /", err)
+		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 	if gcCheck.GuildID != "" {
-		fmt.Println("Guild already have an entry in guild table")
-		bot.followUp(cmd, "🚫 Guild already have an entry in guild table")
+		bot.Logger.Info("guild already have an entry in guild table", zap.String("guildID", args.GuildID))
+		bot.followUp(cmd, "🚫 Guild appears having already welcomed the bot")
 		return
 	}
 
 	// Command registering
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		fmt.Println("error discordgo.New /", err)
+		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "discordgo.New"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	fmt.Printf("Welcoming %s: command creation\n", args.GuildID)
+	bot.Logger.Debug("welcoming: register commands", zap.String("guildID", args.GuildID))
 	if err := internal.CreateGuildsCommands(sess, cmd.AppID, args.GuildID); err != nil {
-		fmt.Println("error CreateGuildsCommands /", err)
+		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "CreateGuildsCommands"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -476,25 +481,25 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 		GuildID: args.GuildID,
 	}
 	if err := bot._createRoles(cmd, args, &gc); err != nil {
-		fmt.Println("error _createRoles /", err)
+		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "_createRoles"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 	if err := bot._createChannels(cmd, args, &gc); err != nil {
-		fmt.Println("error _createChannels /", err)
+		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "_createChannels"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 	if err := bot._setupPermissions(cmd, args, gc); err != nil {
-		fmt.Println("error _setupPermissions /", err)
+		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "_setupPermissions"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Register conf
-	fmt.Printf("Welcoming %s: register instance\n", args.GuildID)
+	bot.Logger.Debug("welcoming: register instance", zap.String("guildID", args.GuildID))
 	if err := internal.DynamodbPutItem(bot.GuildTable, gc); err != nil {
-		fmt.Println("error DynamodbPutItem /", err)
+		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 	}
 
@@ -504,10 +509,10 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.WelcomeArgs, gc *internal.GuildConf) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		return fmt.Errorf("discordgo.New / %s", err)
+		return fmt.Errorf("discordgo.New / %w", err)
 	}
 
-	fmt.Printf("Welcoming %s: LSDC2 roles\n", args.GuildID)
+	bot.Logger.Debug("welcoming: create LSDC2 roles", zap.String("guildID", args.GuildID))
 	adminRole, err := sess.GuildRoleCreate(args.GuildID, &discordgo.RoleParams{
 		Name:        "LSDC2 Admin",
 		Color:       internal.Pointer(0x8833ff),
@@ -515,7 +520,7 @@ func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.WelcomeAr
 		Mentionable: internal.Pointer(true),
 	})
 	if err != nil {
-		return fmt.Errorf("GuildRoleCreate / %s", err)
+		return fmt.Errorf("GuildRoleCreate / %w", err)
 	}
 	userRole, err := sess.GuildRoleCreate(args.GuildID, &discordgo.RoleParams{
 		Name:        "LSDC2 User",
@@ -524,7 +529,7 @@ func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.WelcomeAr
 		Mentionable: internal.Pointer(true),
 	})
 	if err != nil {
-		return fmt.Errorf("GuildRoleCreate / %s", err)
+		return fmt.Errorf("GuildRoleCreate / %w", err)
 	}
 
 	gc.AdminRoleID = adminRole.ID
@@ -536,18 +541,18 @@ func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.WelcomeAr
 func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.WelcomeArgs, gc *internal.GuildConf) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		return fmt.Errorf("discordgo.New / %s", err)
+		return fmt.Errorf("discordgo.New / %w", err)
 	}
 
-	fmt.Printf("Welcoming %s: LSDC2 category\n", args.GuildID)
+	bot.Logger.Debug("welcoming: create LSDC2 category", zap.String("guildID", args.GuildID))
 	lsdc2Category, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
 		Name: "LSDC2",
 		Type: discordgo.ChannelTypeGuildCategory,
 	})
 	if err != nil {
-		return fmt.Errorf("GuildChannelCreateComplex / %s", err)
+		return fmt.Errorf("GuildChannelCreateComplex / %w", err)
 	}
-	fmt.Printf("Welcoming %s: admin channel\n", args.GuildID)
+	bot.Logger.Debug("welcoming: create admin LSDC2 channel", zap.String("guildID", args.GuildID))
 	adminChan, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
 		Name:     "administration",
 		Type:     discordgo.ChannelTypeGuildText,
@@ -558,9 +563,9 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Welcom
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("GuildChannelCreateComplex / %s", err)
+		return fmt.Errorf("GuildChannelCreateComplex / %w", err)
 	}
-	fmt.Printf("Welcoming %s: welcome channel\n", args.GuildID)
+	bot.Logger.Debug("welcoming: create welcom LSDC2 channel", zap.String("guildID", args.GuildID))
 	welcomeChan, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
 		Name:     "welcome",
 		Type:     discordgo.ChannelTypeGuildText,
@@ -570,7 +575,7 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Welcom
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("GuildChannelCreateComplex / %s", err)
+		return fmt.Errorf("GuildChannelCreateComplex / %w", err)
 	}
 
 	gc.ChannelCategoryID = lsdc2Category.ID
@@ -584,14 +589,14 @@ func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.Welc
 	scope := "applications.commands.permissions.update applications.commands.update"
 	sess, cleanup, err := internal.BearerSession(bot.ClientID, bot.ClientSecret, scope)
 	if err != nil {
-		return fmt.Errorf("BearerSession / %s", err)
+		return fmt.Errorf("BearerSession / %w", err)
 	}
 	defer cleanup()
 
-	fmt.Printf("Welcoming %s: setting commands rights\n", args.GuildID)
+	bot.Logger.Debug("welcoming: setting commands rights", zap.String("guildID", args.GuildID))
 	registeredCmd, err := sess.ApplicationCommands(cmd.AppID, args.GuildID)
 	if err != nil {
-		return fmt.Errorf("discordgo.ApplicationCommands / %s", err)
+		return fmt.Errorf("discordgo.ApplicationCommands / %w", err)
 	}
 
 	adminCmd := internal.CommandsWithNameInList(registeredCmd, internal.AdminCmd)
@@ -599,11 +604,11 @@ func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.Welc
 
 	err = internal.SetupAdminCommands(sess, cmd.AppID, args.GuildID, gc, adminCmd)
 	if err != nil {
-		return fmt.Errorf("SetupAdminCommands / %s", err)
+		return fmt.Errorf("SetupAdminCommands / %w", err)
 	}
 	err = internal.SetupUserCommands(sess, cmd.AppID, args.GuildID, gc, userCmd)
 	if err != nil {
-		return fmt.Errorf("SetupUserCommands / %s", err)
+		return fmt.Errorf("SetupUserCommands / %w", err)
 	}
 
 	return nil
@@ -615,66 +620,66 @@ func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.Welc
 
 func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.GoodbyeArgs)
-	fmt.Printf("Received goodbye request with args %+v\n", args)
+	bot.Logger.Debug("received goodbye request", zap.Any("args", args))
 
 	// Make sure the guild is bootstrapped
-	fmt.Printf("Goodbyeing %s: check if guild exists\n", args.GuildID)
+	bot.Logger.Debug("goodbyeing: check if guild exists", zap.String("guildID", args.GuildID))
 	gc := internal.GuildConf{}
 	if err := internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gc); err != nil {
-		fmt.Println("error DynamodbGetItem /", err)
+		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 	if gc.GuildID == "" {
-		fmt.Println("Guild does not any entry in guild table")
-		bot.followUp(cmd, "🚫 Guild not does have any entry in guild table")
+		bot.Logger.Info("guild does not have any entry in guild table", zap.String("guildID", args.GuildID))
+		bot.followUp(cmd, "🚫 Guild not seems to have welcomed the bot yet")
 		return
 	}
 
 	// Destroying all games
-	fmt.Printf("Goodbyeing %s: destroying games\n", args.GuildID)
+	bot.Logger.Debug("goodbyeing: destroying games", zap.String("guildID", args.GuildID))
 	err := internal.DynamodbScanDo(bot.InstanceTable, func(item internal.ServerInstance) (bool, error) {
 		err := bot._destroyServerInstance(item)
 		if err != nil {
-			return false, fmt.Errorf("error _destroyServerInstance / %s", err)
+			return false, fmt.Errorf("_destroyServerInstance / %w", err)
 		}
 		return true, nil // keep paging
 	})
 	if err != nil {
-		fmt.Println("error DynamodbScanDo /", err)
+		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "DynamodbScanDo"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
-	// Command de-registering
+	// Command unregistering
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		fmt.Println("error discordgo.New /", err)
+		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "discordgo.New"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	fmt.Printf("Goodbyeing %s: command deletion\n", args.GuildID)
+	bot.Logger.Debug("goodbyeing: command deletion", zap.String("guildID", args.GuildID))
 	if err := internal.DeleteGuildsCommands(sess, cmd.AppID, args.GuildID); err != nil {
-		fmt.Println("error DeleteGuildsCommands /", err)
+		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "DeleteGuildsCommands"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	if err := bot._deleteChannels(args, &gc); err != nil {
-		fmt.Println("error _deleteChannels /", err)
+		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "_deleteChannels"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 	if err := bot._deleteRoles(args, &gc); err != nil {
-		fmt.Println("error _deleteRoles /", err)
+		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "_deleteRoles"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// De-register conf
-	fmt.Printf("Goodbyeing %s: register instance\n", args.GuildID)
+	bot.Logger.Debug("goodbyeing: deregister instance", zap.String("guildID", args.GuildID))
 	if err := internal.DynamodbDeleteItem(bot.GuildTable, gc.GuildID); err != nil {
-		fmt.Println("error DynamodbDeleteItem /", err)
+		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "DynamodbDeleteItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 	}
 
@@ -684,23 +689,23 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 func (bot Backend) _deleteChannels(args internal.GoodbyeArgs, gc *internal.GuildConf) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		return fmt.Errorf("discordgo.New / %s", err)
+		return fmt.Errorf("discordgo.New / %w", err)
 	}
 
-	fmt.Printf("Goodbyeing %s: LSDC2 category %s\n", args.GuildID, gc.ChannelCategoryID)
+	bot.Logger.Debug("goodbyeing: LSDC2 category", zap.String("guildID", args.GuildID), zap.String("categoryID", gc.ChannelCategoryID))
 	_, err = sess.ChannelDelete(gc.ChannelCategoryID)
 	if err != nil {
-		return fmt.Errorf("ChannelDelete / %s", err)
+		return fmt.Errorf("ChannelDelete / %w", err)
 	}
-	fmt.Printf("Goodbyeing %s: admin channel %s\n", args.GuildID, gc.AdminChannelID)
+	bot.Logger.Debug("goodbyeing: admin channel", zap.String("guildID", args.GuildID), zap.String("channelID", gc.AdminChannelID))
 	_, err = sess.ChannelDelete(gc.AdminChannelID)
 	if err != nil {
-		return fmt.Errorf("ChannelDelete / %s", err)
+		return fmt.Errorf("ChannelDelete / %w", err)
 	}
-	fmt.Printf("Goodbyeing %s: welcome channel %s\n", args.GuildID, gc.WelcomeChannelID)
+	bot.Logger.Debug("goodbyeing: welcome channel", zap.String("guildID", args.GuildID), zap.String("channelID", gc.WelcomeChannelID))
 	_, err = sess.ChannelDelete(gc.WelcomeChannelID)
 	if err != nil {
-		return fmt.Errorf("ChannelDelete / %s", err)
+		return fmt.Errorf("ChannelDelete / %w", err)
 	}
 
 	return nil
@@ -709,17 +714,17 @@ func (bot Backend) _deleteChannels(args internal.GoodbyeArgs, gc *internal.Guild
 func (bot Backend) _deleteRoles(args internal.GoodbyeArgs, gc *internal.GuildConf) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		return fmt.Errorf("discordgo.New / %s", err)
+		return fmt.Errorf("discordgo.New / %w", err)
 	}
 
-	fmt.Printf("Goodbyeing %s: LSDC2 roles\n", args.GuildID)
+	bot.Logger.Debug("goodbyeing: deregistering LSDC2 roles", zap.String("guildID", args.GuildID))
 	err = sess.GuildRoleDelete(args.GuildID, gc.AdminRoleID)
 	if err != nil {
-		return fmt.Errorf("GuildRoleDelete / %s", err)
+		return fmt.Errorf("GuildRoleDelete / %w", err)
 	}
 	err = sess.GuildRoleDelete(args.GuildID, gc.UserRoleID)
 	if err != nil {
-		return fmt.Errorf("GuildRoleDelete / %s", err)
+		return fmt.Errorf("GuildRoleDelete / %w", err)
 	}
 
 	return nil
@@ -734,49 +739,61 @@ func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		fmt.Println("error discordgo.New /", err)
+		bot.Logger.Error("error in inviteMember", zap.String("culprit", "discordgo.New"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Retrieve requester membership
-	fmt.Println("Invite: retrieve requester member")
+	bot.Logger.Debug("Invite: retrieve requester member", zap.String("guildID", args.GuildID), zap.String("requesterID", args.RequesterID))
 	requester, err := sess.GuildMember(args.GuildID, args.RequesterID)
 	if err != nil {
-		fmt.Println("error GuildMember /", err)
+		bot.Logger.Error("error in inviteMember", zap.String("culprit", "GuildMember"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Retrieve target membership
-	fmt.Println("Invite: retrieve target member")
+	bot.Logger.Debug("invite: retrieve target member", zap.String("guildID", args.GuildID), zap.String("targetID", args.TargetID))
 	target, err := sess.GuildMember(args.GuildID, args.TargetID)
 	if err != nil {
-		fmt.Println("error GuildMember /", err)
+		bot.Logger.Error("error in inviteMember", zap.String("culprit", "GuildMember"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Retrieve LSDC2 Admin role from guild conf
-	fmt.Printf("Invite %s by %s: get guild conf\n", target.User.Username, requester.User.Username)
+	bot.Logger.Debug("Invite: get guild conf",
+		zap.String("guildID", args.GuildID),
+		zap.String("who", target.User.Username),
+		zap.String("by", requester.User.Username),
+	)
 	gc := internal.GuildConf{}
 	if err = internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gc); err != nil {
-		fmt.Println("error DynamodbGetItem /", err)
+		bot.Logger.Error("error in inviteMember", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Retrieve list of game channel
-	fmt.Printf("Invite %s by %s: get list of channel\n", target.User.Username, requester.User.Username)
+	bot.Logger.Debug("Invite: get list of channel",
+		zap.String("guildID", args.GuildID),
+		zap.String("who", target.User.Username),
+		zap.String("by", requester.User.Username),
+	)
 	serverChannelIDs, err := internal.DynamodbScanAttr(bot.InstanceTable, "key")
 	if err != nil {
-		fmt.Println("error DynamodbScanAttr /", err)
+		bot.Logger.Error("error in inviteMember", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	if internal.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
-		fmt.Printf("Invite %s by %s: add member role\n", target.User.Username, requester.User.Username)
+		bot.Logger.Debug("invite: add member role",
+			zap.String("guildID", args.GuildID),
+			zap.String("who", target.User.Username),
+			zap.String("by", requester.User.Username),
+		)
 		sess.GuildMemberRoleAdd(args.GuildID, args.TargetID, gc.UserRoleID)
 		bot.message(gc.WelcomeChannelID, ":call_me: Welcome %s !", target.User.Username)
 	} else if !internal.Contains(target.Roles, gc.UserRoleID) {
@@ -784,7 +801,11 @@ func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 		return
 	}
 	if internal.Contains(serverChannelIDs, args.ChannelID) {
-		fmt.Printf("Invite %s by %s: add member to channel\n", target.User.Username, requester.User.Username)
+		bot.Logger.Debug("invite: add member to channel",
+			zap.String("guildID", args.GuildID),
+			zap.String("who", target.User.Username),
+			zap.String("by", requester.User.Username),
+		)
 		internal.AddUserView(sess, args.ChannelID, args.TargetID)
 	}
 
@@ -796,50 +817,62 @@ func (bot Backend) kickMember(cmd internal.BackendCmd) {
 
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		fmt.Println("error discordgo.New /", err)
+		bot.Logger.Error("error in kickMember", zap.String("culprit", "discordgo.New"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Retrieve requester membership
-	fmt.Printf("Kick: retrieve requester member")
+	bot.Logger.Debug("kick: retrieve requester member", zap.String("guildID", args.GuildID), zap.String("requesterID", args.RequesterID))
 	requester, err := sess.GuildMember(args.GuildID, args.RequesterID)
 	if err != nil {
-		fmt.Println("error GuildMember /", err)
+		bot.Logger.Error("error in kickMember", zap.String("culprit", "GuildMember"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Retrieve target membership
-	fmt.Printf("Kick: retrieve target member")
+	bot.Logger.Debug("kick: retrieve target member", zap.String("guildID", args.GuildID), zap.String("targetID", args.TargetID))
 	target, err := sess.GuildMember(args.GuildID, args.TargetID)
 	if err != nil {
-		fmt.Println("error GuildMember /", err)
+		bot.Logger.Error("error in kickMember", zap.String("culprit", "GuildMember"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Retrieve LSDC2 Admin role from guild conf
-	fmt.Printf("Kick %s by %s: get guild conf", target.User.Username, requester.User.Username)
+	bot.Logger.Debug("kick: get guild conf",
+		zap.String("guildID", args.GuildID),
+		zap.String("who", target.User.Username),
+		zap.String("by", requester.User.Username),
+	)
 	gc := internal.GuildConf{}
 	if err = internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gc); err != nil {
-		fmt.Println("error DynamodbGetItem /", err)
+		bot.Logger.Error("error in kickMember", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Retrieve list of game channel
-	fmt.Printf("Invite %s by %s: get list of channel", target.User.Username, requester.User.Username)
+	bot.Logger.Debug("kick: get list of channel",
+		zap.String("guildID", args.GuildID),
+		zap.String("who", target.User.Username),
+		zap.String("by", requester.User.Username),
+	)
 	serverChannelIDs, err := internal.DynamodbScanAttr(bot.InstanceTable, "key")
 	if err != nil {
-		fmt.Println("error DynamodbScanAttr /", err)
+		bot.Logger.Error("error in kickMember", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	if internal.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
 		if args.ChannelID == gc.AdminChannelID {
-			fmt.Printf("Kick %s by %s: remove member role", target.User.Username, requester.User.Username)
+			bot.Logger.Debug("kick: remove member role",
+				zap.String("guildID", args.GuildID),
+				zap.String("who", target.User.Username),
+				zap.String("by", requester.User.Username),
+			)
 			sess.GuildMemberRoleRemove(args.GuildID, args.TargetID, gc.UserRoleID)
 			for _, channelID := range serverChannelIDs {
 				internal.RemoveUserView(sess, channelID, args.TargetID)
@@ -861,7 +894,7 @@ func (bot Backend) kickMember(cmd internal.BackendCmd) {
 //
 
 func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
-	fmt.Println("Received ECS task state")
+	bot.Logger.Debug("received ECS task state")
 
 	task := ecs.Task{}
 	json.Unmarshal(event.Detail, &task)
@@ -869,14 +902,14 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "taskArn", *task.TaskArn, &inst)
 	if err != nil {
-		fmt.Println("error DynamodbGetItem /", err)
+		bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return
 	}
 
 	spec := internal.ServerSpec{}
 	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
 	if err != nil {
-		fmt.Println("error DynamodbGetItem /", err)
+		bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return
 	}
 

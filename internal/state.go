@@ -2,12 +2,14 @@ package internal
 
 import (
 	"encoding/json"
+	"os"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/caarlos0/env"
+	"go.uber.org/zap"
 )
 
 type DiscordSecrets struct {
@@ -35,10 +37,17 @@ type Lsdc2Stack struct {
 type BotEnv struct {
 	Lsdc2Stack
 	DiscordSecrets
+	Logger *zap.Logger
 }
 
-func ParseEnv() (BotEnv, error) {
+func InitBot() (BotEnv, error) {
 	bot := BotEnv{}
+
+	if os.Getenv("DEBUG") != "" {
+		bot.Logger, _ = zap.NewDevelopment()
+	} else {
+		bot.Logger, _ = zap.NewProduction()
+	}
 
 	err := env.Parse(&bot.Lsdc2Stack)
 	if err != nil {
