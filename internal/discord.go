@@ -136,7 +136,7 @@ func BearerSession(clientID string, clientSecret string, scope string) (sess *di
 	cleanup = func() {
 		err := RevokeBearerToken(clientID, clientSecret, token)
 		if err != nil {
-			err = fmt.Errorf("RevokeBearerToken / %s", err)
+			err = fmt.Errorf("RevokeBearerToken / %w", err)
 			panic(err)
 		}
 	}
@@ -413,7 +413,6 @@ var __guildsCommands = []*discordgo.ApplicationCommand{
 
 func CreateGuildsCommands(sess *discordgo.Session, appID string, guildID string) error {
 	for _, cmd := range __guildsCommands {
-		fmt.Printf("Welcoming %s: %s command\n", guildID, cmd.Name)
 		_, err := sess.ApplicationCommandCreate(appID, guildID, cmd)
 		if err != nil {
 			return err
@@ -425,10 +424,9 @@ func CreateGuildsCommands(sess *discordgo.Session, appID string, guildID string)
 func DeleteGuildsCommands(sess *discordgo.Session, appID string, guildID string) error {
 	registeredCmd, err := sess.ApplicationCommands(appID, guildID)
 	if err != nil {
-		return fmt.Errorf("discordgo.ApplicationCommands / %s", err)
+		return fmt.Errorf("discordgo.ApplicationCommands / %w", err)
 	}
 	for _, cmd := range registeredCmd {
-		fmt.Printf("Goodbyeing %s: %s command\n", guildID, cmd.Name)
 		err := sess.ApplicationCommandDelete(appID, guildID, cmd.ID)
 		if err != nil {
 			return err
