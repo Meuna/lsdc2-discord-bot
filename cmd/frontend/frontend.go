@@ -340,7 +340,7 @@ func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[s
 	return internal.Json200(string(jsonBytes[:])), nil
 }
 
-func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label string) (events.APIGatewayProxyResponse, error) {
+func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label string, placeholder string) (events.APIGatewayProxyResponse, error) {
 	customID, err := internal.MarshalCustomIDAction(cmd)
 	if err != nil {
 		bot.Logger.Error("error in textPrompt", zap.String("culprit", "MarshalCustomIDAction"), zap.Error(err))
@@ -356,10 +356,11 @@ func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label stri
 				discordgo.ActionsRow{
 					Components: []discordgo.MessageComponent{
 						discordgo.TextInput{
-							Label:    label,
-							Style:    discordgo.TextInputParagraph,
-							CustomID: "text",
-							Required: true,
+							Label:       label,
+							Placeholder: placeholder,
+							Style:       discordgo.TextInputParagraph,
+							CustomID:    "text",
+							Required:    true,
 						},
 					},
 				},
@@ -516,7 +517,7 @@ func (bot Frontend) requestNewGameRegister(itn discordgo.Interaction) (events.AP
 		}
 		if args.SpecUrl == "" {
 			cmd := internal.BackendCmd{Args: &args}
-			return bot.textPrompt(cmd, "Register new game", "Game LSDC2 spec")
+			return bot.textPrompt(cmd, "Register new game", "Paste LSDC2 json spec", `{"key": "gamename", "image": "repo/image:tag" ... }`)
 		}
 
 	case discordgo.InteractionModalSubmit:
