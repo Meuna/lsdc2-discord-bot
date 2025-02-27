@@ -473,72 +473,8 @@ func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGate
 }
 
 //
-//	Backend commands
+//	Front-end message component and modal roundtrip
 //
-
-func (bot Frontend) genericConfirmedRequest(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
-	msd := itn.ModalSubmitData()
-	cmd, err := internal.UnmarshallCustomIDAction(msd.CustomID)
-	if err != nil {
-		bot.Logger.Error("error in routeMessageComponent", zap.String("culprit", "UnmarshallCustomIDAction"), zap.Error(err))
-		bot.reply("🚫 Internal error")
-	}
-	cmd.AppID = itn.AppID
-	cmd.Token = itn.Token
-
-	if err := bot.callBackend(cmd); err != nil {
-		bot.Logger.Error("error in routeMessageComponent", zap.String("culprit", "callBackend"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-
-	return bot.ackMessage()
-}
-
-func (bot Frontend) requestNewGameRegister(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
-	args := internal.RegisterGameArgs{}
-
-	switch itn.Type {
-	case discordgo.InteractionApplicationCommand:
-		acd := itn.ApplicationCommandData()
-		for _, opt := range acd.Options {
-			if opt.Name == internal.RegisterGameAPISpecUrlOpt {
-				args.SpecUrl = opt.StringValue()
-			} else if opt.Name == internal.RegisterGameAPIOverwriteOpt {
-				args.Overwrite = opt.BoolValue()
-			} else {
-				bot.Logger.Error("unknown option", zap.String("opt", opt.Name))
-				return bot.reply("🚫 Internal error")
-			}
-		}
-		if args.SpecUrl == "" {
-			cmd := internal.BackendCmd{Args: &args}
-			return bot.textPrompt(cmd, "Register new game", "Paste LSDC2 json spec", `{"key": "gamename", "image": "repo/image:tag" ... }`)
-		}
-
-	case discordgo.InteractionModalSubmit:
-		msd := itn.ModalSubmitData()
-		cmdModal, err := internal.UnmarshallCustomIDAction(msd.CustomID)
-		if err != nil {
-			bot.Logger.Error("error in requestNewGameRegister", zap.String("culprit", "UnmarshallCustomIDAction"), zap.Error(err))
-			bot.reply("🚫 Internal error")
-		}
-
-		item := msd.Components[0]
-		textInput := item.(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput)
-		args.Spec = textInput.Value
-		args.Overwrite = cmdModal.Args.(*internal.RegisterGameArgs).Overwrite
-	}
-	cmd := internal.BackendCmd{}
-	cmd.AppID = itn.AppID
-	cmd.Token = itn.Token
-	cmd.Args = &args
-
-	if err := bot.callBackend(cmd); err != nil {
-		bot.Logger.Error("error in requestNewGameRegister", zap.String("culprit", "callBackend"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-	return bot.ackMessage()
-}
 
 func (bot Frontend) confirmWelcomeGuild(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	cmd := internal.BackendCmd{
@@ -633,6 +569,70 @@ func (bot Frontend) configureServerCreation(itn discordgo.Interaction) (events.A
 //
 //	Backend commands
 //
+
+func (bot Frontend) requestNewGameRegister(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	args := internal.RegisterGameArgs{}
+
+	switch itn.Type {
+	case discordgo.InteractionApplicationCommand:
+		acd := itn.ApplicationCommandData()
+		for _, opt := range acd.Options {
+			if opt.Name == internal.RegisterGameAPISpecUrlOpt {
+				args.SpecUrl = opt.StringValue()
+			} else if opt.Name == internal.RegisterGameAPIOverwriteOpt {
+				args.Overwrite = opt.BoolValue()
+			} else {
+				bot.Logger.Error("unknown option", zap.String("opt", opt.Name))
+				return bot.reply("🚫 Internal error")
+			}
+		}
+		if args.SpecUrl == "" {
+			cmd := internal.BackendCmd{Args: &args}
+			return bot.textPrompt(cmd, "Register new game", "Paste LSDC2 json spec", `{"key": "gamename", "image": "repo/image:tag" ... }`)
+		}
+
+	case discordgo.InteractionModalSubmit:
+		msd := itn.ModalSubmitData()
+		cmdModal, err := internal.UnmarshallCustomIDAction(msd.CustomID)
+		if err != nil {
+			bot.Logger.Error("error in requestNewGameRegister", zap.String("culprit", "UnmarshallCustomIDAction"), zap.Error(err))
+			bot.reply("🚫 Internal error")
+		}
+
+		item := msd.Components[0]
+		textInput := item.(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput)
+		args.Spec = textInput.Value
+		args.Overwrite = cmdModal.Args.(*internal.RegisterGameArgs).Overwrite
+	}
+	cmd := internal.BackendCmd{}
+	cmd.AppID = itn.AppID
+	cmd.Token = itn.Token
+	cmd.Args = &args
+
+	if err := bot.callBackend(cmd); err != nil {
+		bot.Logger.Error("error in requestNewGameRegister", zap.String("culprit", "callBackend"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
+	return bot.ackMessage()
+}
+
+func (bot Frontend) genericConfirmedRequest(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	msd := itn.ModalSubmitData()
+	cmd, err := internal.UnmarshallCustomIDAction(msd.CustomID)
+	if err != nil {
+		bot.Logger.Error("error in routeMessageComponent", zap.String("culprit", "UnmarshallCustomIDAction"), zap.Error(err))
+		bot.reply("🚫 Internal error")
+	}
+	cmd.AppID = itn.AppID
+	cmd.Token = itn.Token
+
+	if err := bot.callBackend(cmd); err != nil {
+		bot.Logger.Error("error in routeMessageComponent", zap.String("culprit", "callBackend"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
+
+	return bot.ackMessage()
+}
 
 func (bot Frontend) requestServerCreation(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
