@@ -178,7 +178,7 @@ func (bot Frontend) checkDiscordSignature(request events.LambdaFunctionURLReques
 }
 
 func (bot Frontend) callBackend(cmd internal.BackendCmd) error {
-	bot.Logger.Debug("calling backend function", zap.String("action", cmd.Action()), zap.Any("args", cmd.Args))
+	bot.Logger.Debug("calling backend command", zap.Any("cmd", cmd))
 	return internal.QueueMarshalledAction(bot.QueueUrl, cmd)
 }
 
@@ -264,36 +264,34 @@ func (bot Frontend) replyAutocomplete(choices []*discordgo.ApplicationCommandOpt
 	return internal.Json200(string(jsonBytes[:])), nil
 }
 
-func (bot Frontend) confirm(itnSrc discordgo.Interaction, cmd internal.BackendCmd, msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
+func (bot Frontend) confirm(cmd internal.BackendCmd, title string, msg string) (events.APIGatewayProxyResponse, error) {
 	customID, err := internal.MarshalCustomIDAction(cmd)
 	if err != nil {
-		bot.Logger.Error("error in confirm", zap.String("culprit", "MarshalCustomIDAction"), zap.Error(err))
+		bot.Logger.Error("error in textPrompt", zap.String("culprit", "MarshalCustomIDAction"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
 
-	__componentMessageOrigin = &itnSrc
 	itnResp := discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Type: discordgo.InteractionResponseModal,
 		Data: &discordgo.InteractionResponseData{
-			Content: fmt.Sprintf(msg, fmtarg...),
+			CustomID: customID,
+			Title:    title,
 			Components: []discordgo.MessageComponent{
 				discordgo.ActionsRow{
 					Components: []discordgo.MessageComponent{
-						discordgo.Button{
-							Label:    "Yes",
-							Style:    discordgo.PrimaryButton,
-							CustomID: customID,
-						},
-						discordgo.Button{
-							Label:    "Cancel",
-							Style:    discordgo.SecondaryButton,
-							CustomID: "cancel",
+						discordgo.TextInput{
+							Label:     title,
+							Value:     msg,
+							Style:     discordgo.TextInputParagraph,
+							CustomID:  customID,
+							MaxLength: 0,
 						},
 					},
 				},
 			},
 		},
 	}
+
 	jsonBytes, err := json.Marshal(itnResp)
 	if err != nil {
 		return internal.Error500(), fmt.Errorf("marshal / %s", err)
@@ -414,53 +412,23 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.Lambd
 	}
 }
 
-// Very unreliable state persistance between lambda calls
-// If it fail, users can still manually delete the origin message
-var __componentMessageOrigin *discordgo.Interaction
-
 func (bot Frontend) routeMessageComponent(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
-	// Delete the origin message if it exists, but don't return an error if it fails
-	if __componentMessageOrigin != nil {
-		sess, err := discordgo.New("Bot " + bot.Token)
-		if err != nil {
-			bot.Logger.Error("error in routeMessageComponent", zap.String("culprit", "discordgo.New"), zap.Error(err))
-		}
-		err = sess.InteractionResponseDelete(__componentMessageOrigin)
-		if err != nil {
-			bot.Logger.Error("error in routeMessageComponent", zap.String("culprit", "InteractionResponseDelete"), zap.Error(err))
-		}
-		__componentMessageOrigin = nil
-	}
+	msd := itn.ModalSubmitData()
 
-	mcd := itn.MessageComponentData()
-	// Do nothing if canceled
-	if mcd.CustomID == "cancel" {
-		bot.Logger.Debug("action canceled")
-		return bot.ackComponent()
-	}
-
-	// Or proceed with action
-	cmd, err := internal.UnmarshallCustomIDAction(mcd.CustomID)
+	cmd, err := internal.UnmarshallCustomIDAction(msd.CustomID)
 	if err != nil {
-		bot.Logger.Error("error in routeMessageComponent", zap.String("culprit", "UnmarshallCustomIDAction"), zap.Error(err))
+		bot.Logger.Error("error in routeModalSubmit", zap.String("culprit", "UnmarshallCustomIDAction"), zap.Error(err))
 		bot.reply("🚫 Internal error")
 	}
-	cmd.AppID = itn.AppID
-	cmd.Token = itn.Token
 
-	// Stop the server if needed
-	if cmd.Action() == internal.DestroyAPI {
-		args := cmd.Args.(*internal.DestroyArgs)
-		bot.stopServer(args.ChannelID)
+	action := cmd.Action()
+	bot.Logger.Debug("routing message component", zap.String("action", action))
+
+	switch action {
+	default:
+		bot.Logger.Error("unknown command", zap.String("cmd", action))
+		return bot.reply("🚫 I don't understand ¯\\_(ツ)_/¯")
 	}
-
-	// And finally call the backend
-	if err := bot.callBackend(cmd); err != nil {
-		bot.Logger.Error("error in routeMessageComponent", zap.String("culprit", "callBackend"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-
-	return bot.ackMessage()
 }
 
 func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
@@ -472,13 +440,22 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 		bot.reply("🚫 Internal error")
 	}
 
-	switch cmd.Action() {
+	action := cmd.Action()
+	bot.Logger.Debug("routing modal", zap.String("action", action))
+
+	switch action {
+	case internal.WelcomeAPI:
+		return bot.genericConfirmedRequest(itn)
+	case internal.GoodbyeAPI:
+		return bot.genericConfirmedRequest(itn)
+	case internal.DestroyAPI:
+		return bot.genericConfirmedRequest(itn)
 	case internal.RegisterGameAPI:
 		return bot.requestNewGameRegister(itn)
 	case internal.SpinupAPI:
 		return bot.requestServerCreation(itn)
 	default:
-		bot.Logger.Error("unknown command", zap.String("cmd", cmd.Action()))
+		bot.Logger.Error("unknown command", zap.String("cmd", action))
 		return bot.reply("🚫 I don't understand ¯\\_(ツ)_/¯")
 	}
 }
@@ -498,6 +475,24 @@ func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGate
 //
 //	Backend commands
 //
+
+func (bot Frontend) genericConfirmedRequest(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	msd := itn.ModalSubmitData()
+	cmd, err := internal.UnmarshallCustomIDAction(msd.CustomID)
+	if err != nil {
+		bot.Logger.Error("error in routeMessageComponent", zap.String("culprit", "UnmarshallCustomIDAction"), zap.Error(err))
+		bot.reply("🚫 Internal error")
+	}
+	cmd.AppID = itn.AppID
+	cmd.Token = itn.Token
+
+	if err := bot.callBackend(cmd); err != nil {
+		bot.Logger.Error("error in routeMessageComponent", zap.String("culprit", "callBackend"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
+
+	return bot.ackMessage()
+}
 
 func (bot Frontend) requestNewGameRegister(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	args := internal.RegisterGameArgs{}
@@ -551,7 +546,9 @@ func (bot Frontend) confirmWelcomeGuild(itn discordgo.Interaction) (events.APIGa
 			GuildID: itn.GuildID,
 		},
 	}
-	return bot.confirm(itn, cmd, "Do you confirm you welcome LSDC2 bot, including its roles and channels in your guild ?")
+	title := "Welcome Mr. bot"
+	confimationText := "When you click send, you will welcome LSDC2 bot in your guild, including its roles and channels"
+	return bot.confirm(cmd, title, confimationText)
 }
 
 func (bot Frontend) confirmGuildGoodbye(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
@@ -560,7 +557,9 @@ func (bot Frontend) confirmGuildGoodbye(itn discordgo.Interaction) (events.APIGa
 			GuildID: itn.GuildID,
 		},
 	}
-	return bot.confirm(itn, cmd, "You will not be able to retrieve savegames. Are you sure you want to say goodbye ?")
+	title := "Goodbye Mr. bot"
+	confimationText := "When you click send, the LSDC2 bot will say goodbye to your guild. You will not be able to retrieve savegames anymore."
+	return bot.confirm(cmd, title, confimationText)
 }
 
 func (bot Frontend) confirmServerDestruction(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
@@ -583,7 +582,11 @@ func (bot Frontend) confirmServerDestruction(itn discordgo.Interaction) (events.
 			ChannelID: inst.ChannelID,
 		},
 	}
-	return bot.confirm(itn, cmd, "Confirm destruction of %s ?", serverName)
+	title := fmt.Sprintf("Delete %s", serverName)
+	confimationText := fmt.Sprintf(
+		"When you click send, the %s server will be removed from your guild. You will not be able to retrieve savegames anymore.",
+		serverName)
+	return bot.confirm(cmd, title, confimationText)
 }
 
 func (bot Frontend) configureServerCreation(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
@@ -608,6 +611,7 @@ func (bot Frontend) configureServerCreation(itn discordgo.Interaction) (events.A
 	}
 
 	if len(spec.EnvParamMap) > 0 {
+		// If the instance requires environment variables, we reply with a modal
 		paramSpec := make(map[string]string, len(spec.EnvParamMap))
 		for env, label := range spec.EnvParamMap {
 			paramSpec[env] = label
@@ -615,9 +619,20 @@ func (bot Frontend) configureServerCreation(itn discordgo.Interaction) (events.A
 		title := fmt.Sprintf("Configure %s server", gameName)
 		return bot.modal(cmd, title, paramSpec)
 	} else {
-		return bot.confirm(itn, cmd, "Confirm %s server spinup ?", gameName)
+		// Else we shortcut the frontend roundtrip (via requestServerCreation) and directly call the backend
+		cmd.AppID = itn.AppID
+		cmd.Token = itn.Token
+		if err := bot.callBackend(cmd); err != nil {
+			bot.Logger.Error("error in configureServerCreation", zap.String("culprit", "callBackend"), zap.Error(err))
+			return bot.reply("🚫 Internal error")
+		}
+		return bot.ackMessage()
 	}
 }
+
+//
+//	Backend commands
+//
 
 func (bot Frontend) requestServerCreation(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()

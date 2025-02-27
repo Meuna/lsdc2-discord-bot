@@ -128,6 +128,9 @@ func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...inter
 //
 
 func (bot Backend) routeFcn(cmd internal.BackendCmd) {
+	action := cmd.Action()
+	bot.Logger.Debug("routing command", zap.Any("cmd", cmd))
+
 	switch cmd.Action() {
 	case internal.RegisterGameAPI:
 		bot.registerGame(cmd)
@@ -151,7 +154,7 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 		bot.kickMember(cmd)
 
 	default:
-		bot.Logger.Error("unrecognized function", zap.String("action", cmd.Action()))
+		bot.Logger.Error("unrecognized function", zap.String("action", action))
 	}
 }
 
@@ -407,6 +410,14 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 		bot.Logger.Error("error in destroyServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
+	}
+
+	// If the task is running
+	if inst.TaskArn != "" {
+		if err := internal.StopTask(inst, bot.Lsdc2Stack); err != nil {
+			bot.Logger.Error("error in destroyServer", zap.String("culprit", "StopTask"), zap.Error(err))
+			return
+		}
 	}
 
 	err := bot._destroyServerInstance(inst)
