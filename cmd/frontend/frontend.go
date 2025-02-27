@@ -536,7 +536,7 @@ func (bot Frontend) configureServerCreation(itn discordgo.Interaction) (events.A
 		return bot.reply("🚫 Internal error")
 	}
 	if spec.Name == "" {
-		return bot.reply("⚠ Game spec %s not found :thinking:", gameName)
+		return bot.reply("⚠️ Game spec %s not found :thinking:", gameName)
 	}
 
 	cmd := internal.BackendCmd{
@@ -735,13 +735,13 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 		if task != nil {
 			switch internal.GetTaskStatus(task) {
 			case internal.TaskStopping:
-				return bot.reply("⚠ Server is going offline. Please wait and try again")
+				return bot.reply("⚠️ Server is going offline. Please wait and try again")
 			case internal.TaskProvisioning:
-				return bot.reply("⚠ Server is starting. Please wait a few minutes")
+				return bot.reply("⚠️ Server is starting. Please wait a few minutes")
 			case internal.TaskContainerStopping:
-				return bot.reply("⚠ Container is going offline. Please wait and try again")
+				return bot.reply("⚠️ Container is going offline. Please wait and try again")
 			case internal.TaskContainerProvisioning:
-				return bot.reply("⚠ Container is starting. Please wait a few minutes")
+				return bot.reply("⚠️ Container is starting. Please wait a few minutes")
 			case internal.TaskRunning:
 				return bot.serverStatus(channelID)
 			}
@@ -778,12 +778,11 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	if inst.TaskArn == "" {
 		return bot.reply("🟥 Server offline")
 	}
-
 	if err = internal.StopTask(inst, bot.Lsdc2Stack); err != nil {
 		bot.Logger.Error("error in stopServer", zap.String("culprit", "StopTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
-	return bot.reply("⚠ Server is going offline")
+	return bot.reply("⚠️ Server is going offline")
 }
 
 func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyResponse, error) {
@@ -794,7 +793,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 		return bot.reply("🚫 Internal error")
 	}
 	if inst.SpecName == "" {
-		return bot.reply("⚠ This should not happen :thinking:. Are you in a server channel ?")
+		return bot.reply("⚠️ This should not happen :thinking:. Are you in a server channel ?")
 	}
 
 	spec := internal.ServerSpec{}
@@ -817,19 +816,19 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 	case internal.TaskStopped:
 		return bot.reply("🟥 Server offline")
 	case internal.TaskStopping:
-		return bot.reply("⚠ Server is going offline")
+		return bot.reply("⚠️ Server is going offline")
 	case internal.TaskProvisioning:
-		return bot.reply("⚠ Server is starting. Please wait a few minutes")
+		return bot.reply("⚠️ Server is starting. Please wait a few minutes")
 	case internal.TaskContainerStopping:
-		return bot.reply("⚠ Server is going offline")
+		return bot.reply("⚠️ Server is going offline")
 	case internal.TaskContainerProvisioning:
-		return bot.reply("⚠ Container is starting. We're close !")
+		return bot.reply("⚠️ Container is starting. We're close !")
 	}
 
 	ip, err := internal.GetTaskIP(task, bot.Lsdc2Stack)
 	if err != nil {
 		bot.Logger.Error("error in serverStatus", zap.String("culprit", "GetTaskIP"), zap.Error(err))
-		return bot.reply("⚠ Public IP not available, contact administrator")
+		return bot.reply("⚠️ Public IP not available, contact administrator")
 	}
 	return bot.reply("✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
 }
