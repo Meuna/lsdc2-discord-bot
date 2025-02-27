@@ -223,7 +223,7 @@ func DynamodbScanFindFirst(tableName string, key string, value string, out inter
 	}, func(page *dynamodb.ScanOutput, last bool) bool {
 		for _, item := range page.Items {
 			if val, ok := item[key]; ok {
-				if *val.S == value {
+				if val.S != nil && *val.S == value {
 					innerErr = dynamodbattribute.UnmarshalMap(item, out)
 					return false // stop paging
 				}
@@ -252,7 +252,9 @@ func DynamodbScanAttr(tableName string, key string) ([]string, error) {
 		outPage := make([]string, len(page.Items))
 		for idx, item := range page.Items {
 			if val, ok := item[key]; ok {
-				outPage[idx] = *val.S
+				if val.S != nil {
+					outPage[idx] = *val.S
+				}
 			}
 		}
 		out = append(out, outPage...)
