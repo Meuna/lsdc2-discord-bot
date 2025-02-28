@@ -914,6 +914,7 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "taskArn", *task.TaskArn, &inst)
 	if err != nil {
 		bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
+		bot.message(inst.ChannelID, "🚫 Notification error")
 		return
 	}
 
@@ -921,6 +922,7 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
 	if err != nil {
 		bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		bot.message(inst.ChannelID, "🚫 Notification error")
 		return
 	}
 
@@ -934,7 +936,7 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 		}
 		bot.message(inst.ChannelID, "📢 Server task state: %s\nIP: %s (open ports: %s)",
 			*task.LastStatus, ip, spec.OpenPorts())
-	case internal.TaskContainerStopping:
+	case internal.TaskStopping:
 		bot.message(inst.ChannelID, "📢 Server task is going offline")
 	case internal.TaskStopped:
 		bot.message(inst.ChannelID, "📢 Server task went offline")
