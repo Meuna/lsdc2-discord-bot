@@ -513,6 +513,21 @@ func (bot Frontend) confirmServerDestruction(itn discordgo.Interaction) (events.
 		return bot.reply("🚫 Server %s not found", serverName)
 	}
 
+	// Check if a task is running
+	if inst.TaskArn != "" {
+		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
+		if err != nil {
+			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
+			return bot.reply("🚫 Internal error")
+		}
+		if task != nil {
+			taskStatus := internal.GetTaskStatus(task)
+			if taskStatus != internal.TaskStopped {
+				return bot.reply("⚠️ The server is running. Please turn it off and try again")
+			}
+		}
+	}
+
 	cmd := internal.BackendCmd{
 		Args: &internal.DestroyArgs{
 			ChannelID: inst.ChannelID,
@@ -736,7 +751,7 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 			switch internal.GetTaskStatus(task) {
 			case internal.TaskStopping:
 				return bot.reply("⚠️ Server is going offline. Please wait and try again")
-			case internal.TaskProvisioning:
+			case internal.TaskStarting:
 				return bot.reply("⚠️ Server is starting. Please wait a few minutes")
 			case internal.TaskRunning:
 				return bot.serverStatus(channelID)
@@ -773,6 +788,19 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	// Check that the task is not yet running
 	if inst.TaskArn == "" {
 		return bot.reply("🟥 Server offline")
+	} else {
+		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
+		if err != nil {
+			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
+			return bot.reply("🚫 Internal error")
+		}
+		if task != nil {
+			switch internal.GetTaskStatus(task) {
+			case internal.TaskStopped:
+				return bot.reply("🟥 Server offline")
+			}
+			// No match == we can issue a stop command
+		}
 	}
 
 	bot.Logger.Debug("stoping: stop task", zap.String("channelID", inst.ChannelID))
@@ -815,14 +843,14 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 		return bot.reply("🟥 Server offline")
 	case internal.TaskStopping:
 		return bot.reply("⚠️ Server is going offline")
-	case internal.TaskProvisioning:
+	case internal.TaskStarting:
 		return bot.reply("⚠️ Server is starting. Please wait a few minutes")
 	}
 
 	ip, err := internal.GetTaskIP(task, bot.Lsdc2Stack)
 	if err != nil {
 		bot.Logger.Error("error in serverStatus", zap.String("culprit", "GetTaskIP"), zap.Error(err))
-		return bot.reply("⚠️ Public IP not available, contact administrator")
+		return bot.reply(":thinking: Public IP not available, contact administrator")
 	}
 	return bot.reply("✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
 }
