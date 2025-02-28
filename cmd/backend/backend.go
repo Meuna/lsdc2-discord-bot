@@ -303,6 +303,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	// And register instance
 	bot.Logger.Debug("spinupServer: register instance", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	inst := internal.ServerInstance{
+		GuildID:       args.GuildID,
 		Name:          instName,
 		SpecName:      spec.Name,
 		ChannelID:     chanID,
@@ -412,7 +413,7 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Check if a task is running
+	// Check if a task is running in which case abort the server destruction
 	if inst.TaskArn != "" {
 		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
 		if err != nil {
@@ -634,9 +635,7 @@ func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.Welc
 	return nil
 }
 
-//
 //  Goodbyeing
-//
 
 func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.GoodbyeArgs)
@@ -656,12 +655,13 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Destroying all games
+	// Destroying guild games
 	bot.Logger.Debug("goodbyeing: destroying games", zap.String("guildID", args.GuildID))
-	err := internal.DynamodbScanDo(bot.InstanceTable, func(item internal.ServerInstance) (bool, error) {
-		err := bot._destroyServerInstance(item)
-		if err != nil {
-			return false, fmt.Errorf("_destroyServerInstance / %w", err)
+	err := internal.DynamodbScanDo(bot.InstanceTable, func(inst internal.ServerInstance) (bool, error) {
+		if inst.GuildID == args.GuildID {
+			if err := bot._destroyServerInstance(inst); err != nil {
+				return false, fmt.Errorf("_destroyServerInstance / %w", err)
+			}
 		}
 		return true, nil // keep paging
 	})

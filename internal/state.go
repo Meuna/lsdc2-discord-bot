@@ -165,6 +165,7 @@ type GuildConf struct {
 
 type ServerInstance struct {
 	ChannelID     string `json:"key"`
+	GuildID       string `json:"guildID"`
 	Name          string `json:"name"`
 	SpecName      string `json:"specName"`
 	TaskFamily    string `json:"taskFamily"`
