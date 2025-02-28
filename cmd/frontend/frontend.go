@@ -738,10 +738,6 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 				return bot.reply("⚠️ Server is going offline. Please wait and try again")
 			case internal.TaskProvisioning:
 				return bot.reply("⚠️ Server is starting. Please wait a few minutes")
-			case internal.TaskContainerStopping:
-				return bot.reply("⚠️ Container is going offline. Please wait and try again")
-			case internal.TaskContainerProvisioning:
-				return bot.reply("⚠️ Container is starting. Please wait a few minutes")
 			case internal.TaskRunning:
 				return bot.serverStatus(channelID)
 			}
@@ -778,6 +774,8 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	if inst.TaskArn == "" {
 		return bot.reply("🟥 Server offline")
 	}
+
+	bot.Logger.Debug("stoping: stop task", zap.String("channelID", inst.ChannelID))
 	if err = internal.StopTask(inst, bot.Lsdc2Stack); err != nil {
 		bot.Logger.Error("error in stopServer", zap.String("culprit", "StopTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -819,10 +817,6 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 		return bot.reply("⚠️ Server is going offline")
 	case internal.TaskProvisioning:
 		return bot.reply("⚠️ Server is starting. Please wait a few minutes")
-	case internal.TaskContainerStopping:
-		return bot.reply("⚠️ Server is going offline")
-	case internal.TaskContainerProvisioning:
-		return bot.reply("⚠️ Container is starting. We're close !")
 	}
 
 	ip, err := internal.GetTaskIP(task, bot.Lsdc2Stack)

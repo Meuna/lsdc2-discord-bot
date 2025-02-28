@@ -176,8 +176,6 @@ const (
 	TaskStopped = iota
 	TaskStopping
 	TaskProvisioning
-	TaskContainerStopping
-	TaskContainerProvisioning
 	TaskRunning
 )
 
@@ -185,25 +183,23 @@ func GetTaskStatus(task *ecs.Task) int {
 	if (task == nil) || *task.LastStatus == "STOPPED" {
 		return TaskStopped
 	}
-	offlineStatus := []string{"DEACTIVATING", "STOPING", "DEPROVISIONING"}
-	if Contains(offlineStatus, *task.LastStatus) {
+
+	offliningStatus := []string{"DEACTIVATING", "STOPING", "DEPROVISIONING"}
+	provisioningStatus := []string{"PROVISIONING", "PENDING", "ACTIVATING"}
+
+	if Contains(offliningStatus, *task.LastStatus) {
 		return TaskStopping
 	}
-	provisioningStatus := []string{"PROVISIONING", "PENDING", "ACTIVATING"}
 	if Contains(provisioningStatus, *task.LastStatus) {
 		return TaskProvisioning
 	}
+
 	// From here, we know that task.LastStatus="RUNNING"
-	offlineStatus = []string{"REGISTRATION_FAILED", "INACTIVE", "DEREGISTERING", "DRAINING"}
-	if len(task.Containers) == 0 || Contains(offlineStatus, *task.Containers[0].LastStatus) {
-		return TaskContainerStopping
+	if len(task.Containers) == 0 || Contains(offliningStatus, *task.Containers[0].LastStatus) {
+		return TaskStopping
 	}
-	if *task.Containers[0].LastStatus == "REGISTERING" {
-		return TaskContainerProvisioning
-	}
-	// We take a last step to check that the task is not heading offline
-	if *task.DesiredStatus == "STOPPED" {
-		return TaskContainerStopping
+	if Contains(provisioningStatus, *task.LastStatus) {
+		return TaskProvisioning
 	}
 	return TaskRunning
 }
