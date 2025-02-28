@@ -91,7 +91,7 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 	case KickAPI:
 		cmd.Args = &KickArgs{}
 	default:
-		return fmt.Errorf("unknown command: %w", tmp.Action)
+		return fmt.Errorf("unknown command: %s", tmp.Action)
 	}
 
 	return json.Unmarshal(tmp.Args, cmd.Args)

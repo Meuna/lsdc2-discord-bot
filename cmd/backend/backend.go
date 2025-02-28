@@ -436,7 +436,7 @@ func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) error {
 		return fmt.Errorf("discordgo.New / %w", err)
 	}
 
-	bot.Logger.Debug("sestroy: get guild conf", zap.String("channelID", inst.ChannelID))
+	bot.Logger.Debug("destroy: get guild conf", zap.String("channelID", inst.ChannelID))
 	if _, err = sess.ChannelDelete(inst.ChannelID); err != nil {
 		return fmt.Errorf("ChannelDelete / %w", err)
 	}
