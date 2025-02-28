@@ -412,11 +412,20 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	// If the task is running
+	// Check if a task is running
 	if inst.TaskArn != "" {
-		if err := internal.StopTask(inst, bot.Lsdc2Stack); err != nil {
-			bot.Logger.Error("error in destroyServer", zap.String("culprit", "StopTask"), zap.Error(err))
+		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
+		if err != nil {
+			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
+			bot.followUp(cmd, "🚫 Internal error")
 			return
+		}
+		if task != nil {
+			taskStatus := internal.GetTaskStatus(task)
+			if taskStatus != internal.TaskStopped {
+				bot.followUp(cmd, "⚠️ The server is running. Please turn it off and try again")
+				return
+			}
 		}
 	}
 
@@ -927,18 +936,23 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 	}
 
 	switch internal.GetTaskStatus(&task) {
-	case internal.TaskProvisioning:
+	case internal.TaskStarting:
 		bot.message(inst.ChannelID, "📢 Server task state: %s", *task.LastStatus)
 	case internal.TaskRunning:
 		ip, err := internal.GetTaskIP(&task, bot.Lsdc2Stack)
 		if err != nil {
 			ip = "error retrieving ip"
 		}
-		bot.message(inst.ChannelID, "📢 Server task state: %s\nIP: %s (open ports: %s)",
-			*task.LastStatus, ip, spec.OpenPorts())
+		bot.message(inst.ChannelID, "✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
 	case internal.TaskStopping:
 		bot.message(inst.ChannelID, "📢 Server task is going offline")
 	case internal.TaskStopped:
 		bot.message(inst.ChannelID, "📢 Server task went offline")
+		bot.Logger.Debug("notify: flag instance as definitely down", zap.String("channelID", inst.ChannelID))
+		inst.TaskArn = ""
+		if err = internal.DynamodbPutItem(bot.InstanceTable, inst); err != nil {
+			bot.Logger.Error("error in stopServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
+			bot.message(inst.ChannelID, "🚫 Notification error")
+		}
 	}
 }

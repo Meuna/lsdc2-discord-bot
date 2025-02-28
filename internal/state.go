@@ -175,31 +175,20 @@ type ServerInstance struct {
 const (
 	TaskStopped = iota
 	TaskStopping
-	TaskProvisioning
+	TaskStarting
 	TaskRunning
 )
 
 func GetTaskStatus(task *ecs.Task) int {
-	if (task == nil) || *task.LastStatus == "STOPPED" {
+	if (task == nil) || *task.LastStatus == ecs.DesiredStatusStopped {
 		return TaskStopped
 	}
-
-	offliningStatus := []string{"DEACTIVATING", "STOPING", "DEPROVISIONING"}
-	provisioningStatus := []string{"PROVISIONING", "PENDING", "ACTIVATING"}
-
-	if Contains(offliningStatus, *task.LastStatus) {
+	if *task.LastStatus == ecs.DesiredStatusRunning {
+		return TaskRunning
+	}
+	if *task.DesiredStatus == ecs.DesiredStatusStopped {
 		return TaskStopping
+	} else {
+		return TaskStarting
 	}
-	if Contains(provisioningStatus, *task.LastStatus) {
-		return TaskProvisioning
-	}
-
-	// From here, we know that task.LastStatus="RUNNING"
-	if len(task.Containers) == 0 || Contains(offliningStatus, *task.Containers[0].LastStatus) {
-		return TaskStopping
-	}
-	if Contains(provisioningStatus, *task.LastStatus) {
-		return TaskProvisioning
-	}
-	return TaskRunning
 }
