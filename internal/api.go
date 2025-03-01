@@ -34,39 +34,28 @@ const (
 	RegisterGameAPIOverwriteOpt string = "overwrite"
 )
 
+// Structure used to communicate bot intent between the frontend and the
+// backend, but also between frontend roundtrips (modals and message
+// components). The Args and Api field works together, with the Api field
+// set by the Args Type upon JSON marshalling and the Args Type set by the
+// Api field upon unmarshalling.
 type BackendCmd struct {
-	Args  interface{}
 	AppID string `json:",omitempty"`
 	Token string `json:",omitempty"`
+	Api   string
+	Args  any
 }
 
-func (cmd BackendCmd) Action() string {
-	switch cmd.Args.(type) {
-	case *RegisterGameArgs, RegisterGameArgs:
-		return RegisterGameAPI
-	case *WelcomeArgs, WelcomeArgs:
-		return WelcomeAPI
-	case *GoodbyeArgs, GoodbyeArgs:
-		return GoodbyeAPI
-	case *SpinupArgs, SpinupArgs:
-		return SpinupAPI
-	case *DestroyArgs, DestroyArgs:
-		return DestroyAPI
-	case *InviteArgs, InviteArgs:
-		return InviteAPI
-	case *KickArgs, KickArgs:
-		return KickAPI
-	default:
-		panic(fmt.Sprintf("Incompatible BackendCmd Args type %T", cmd.Args))
-	}
-}
-
+// Custom JSON unmarshaler for the BackendCmd type. It first unmarshals
+// the JSON into a temporary structure to handle the dynamic nature of
+// the Args field based on the Api field. Depending on the value of Api,
+// it initializes the appropriate Args structure and then unmarshals the
+// Args field into this structure.
 func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 	type backendCmd BackendCmd
 	var tmp struct {
 		backendCmd
-		Action string
-		Args   json.RawMessage
+		Args json.RawMessage
 	}
 	err := json.Unmarshal(src, &tmp)
 	if err != nil {
@@ -75,7 +64,7 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 
 	*cmd = BackendCmd(tmp.backendCmd)
 
-	switch tmp.Action {
+	switch tmp.Api {
 	case RegisterGameAPI:
 		cmd.Args = &RegisterGameArgs{}
 	case WelcomeAPI:
@@ -91,21 +80,38 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 	case KickAPI:
 		cmd.Args = &KickArgs{}
 	default:
-		return fmt.Errorf("unknown command: %s", tmp.Action)
+		return fmt.Errorf("unknown command: %s", tmp.Api)
 	}
 
 	return json.Unmarshal(tmp.Args, cmd.Args)
 }
 
+// Custom JSON marshaler for the BackendCmd type. It sets the Api field
+// based on the type of Args and then marshals the BackendCmd to JSON.
+// If the Args type is not recognized, it returns an error.
 func (cmd BackendCmd) MarshalJSON() ([]byte, error) {
 	type backendCmd BackendCmd
-	return json.Marshal(struct {
-		backendCmd
-		Action string
-	}{
-		backendCmd: backendCmd(cmd),
-		Action:     cmd.Action(),
-	})
+
+	switch cmd.Args.(type) {
+	case *RegisterGameArgs, RegisterGameArgs:
+		cmd.Api = RegisterGameAPI
+	case *WelcomeArgs, WelcomeArgs:
+		cmd.Api = WelcomeAPI
+	case *GoodbyeArgs, GoodbyeArgs:
+		cmd.Api = GoodbyeAPI
+	case *SpinupArgs, SpinupArgs:
+		cmd.Api = SpinupAPI
+	case *DestroyArgs, DestroyArgs:
+		cmd.Api = DestroyAPI
+	case *InviteArgs, InviteArgs:
+		cmd.Api = InviteAPI
+	case *KickArgs, KickArgs:
+		cmd.Api = KickAPI
+	default:
+		return nil, fmt.Errorf("incompatible BackendCmd Args type %T", cmd.Args)
+	}
+
+	return json.Marshal(backendCmd(cmd))
 }
 
 type RegisterGameArgs struct {

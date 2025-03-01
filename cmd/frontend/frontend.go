@@ -82,7 +82,7 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 		return internal.Error500(), fmt.Errorf("DynamodbGetItem / %w", err)
 	}
 	if inst.SpecName == "" {
-		return internal.Error500(), fmt.Errorf("instance %w not found", channelID)
+		return internal.Error500(), fmt.Errorf("instance %w not found", channelID) // FIXME: replace %w with %s
 	}
 
 	// Presign S3 PUT
@@ -421,12 +421,11 @@ func (bot Frontend) routeMessageComponent(itn discordgo.Interaction) (events.API
 		bot.reply("🚫 Internal error")
 	}
 
-	action := cmd.Action()
-	bot.Logger.Debug("routing message component", zap.String("action", action))
+	bot.Logger.Debug("routing message component", zap.String("action", cmd.Api))
 
-	switch action {
+	switch cmd.Api {
 	default:
-		bot.Logger.Error("unknown command", zap.String("cmd", action))
+		bot.Logger.Error("unknown command", zap.String("cmd", cmd.Api))
 		return bot.reply("🚫 I don't understand ¯\\_(ツ)_/¯")
 	}
 }
@@ -440,10 +439,9 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 		bot.reply("🚫 Internal error")
 	}
 
-	action := cmd.Action()
-	bot.Logger.Debug("routing modal", zap.String("action", action))
+	bot.Logger.Debug("routing modal", zap.String("action", cmd.Api))
 
-	switch action {
+	switch cmd.Api {
 	case internal.WelcomeAPI:
 		return bot.genericConfirmedRequest(itn)
 	case internal.GoodbyeAPI:
@@ -455,7 +453,7 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 	case internal.SpinupAPI:
 		return bot.requestServerCreation(itn)
 	default:
-		bot.Logger.Error("unknown command", zap.String("cmd", action))
+		bot.Logger.Error("unknown command", zap.String("cmd", cmd.Api))
 		return bot.reply("🚫 I don't understand ¯\\_(ツ)_/¯")
 	}
 }
@@ -619,10 +617,11 @@ func (bot Frontend) requestNewGameRegister(itn discordgo.Interaction) (events.AP
 		args.Spec = textInput.Value
 		args.Overwrite = cmdModal.Args.(*internal.RegisterGameArgs).Overwrite
 	}
-	cmd := internal.BackendCmd{}
-	cmd.AppID = itn.AppID
-	cmd.Token = itn.Token
-	cmd.Args = &args
+	cmd := internal.BackendCmd{
+		AppID: itn.AppID,
+		Token: itn.Token,
+		Args:  &args,
+	}
 
 	if err := bot.callBackend(cmd); err != nil {
 		bot.Logger.Error("error in requestNewGameRegister", zap.String("culprit", "callBackend"), zap.Error(err))

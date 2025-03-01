@@ -128,10 +128,9 @@ func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...inter
 //
 
 func (bot Backend) routeFcn(cmd internal.BackendCmd) {
-	action := cmd.Action()
 	bot.Logger.Debug("routing command", zap.Any("cmd", cmd))
 
-	switch cmd.Action() {
+	switch cmd.Api {
 	case internal.RegisterGameAPI:
 		bot.registerGame(cmd)
 
@@ -154,7 +153,7 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 		bot.kickMember(cmd)
 
 	default:
-		bot.Logger.Error("unrecognized function", zap.String("action", action))
+		bot.Logger.Error("unrecognized function", zap.String("action", cmd.Api))
 	}
 }
 
