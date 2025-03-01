@@ -664,7 +664,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 		return bot.reply("⚠️ Server is starting. Please wait a few minutes")
 	}
 
-	ip, err := internal.GetTaskIP(task, bot.Lsdc2Stack)
+	ip, err := internal.GetTaskIP(task)
 	if err != nil {
 		bot.Logger.Error("error in serverStatus", zap.String("culprit", "GetTaskIP"), zap.Error(err))
 		return bot.reply(":thinking: Public IP not available, contact administrator")
