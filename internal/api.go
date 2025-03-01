@@ -154,26 +154,54 @@ type KickArgs struct {
 	RequesterIsAdmin bool
 }
 
-func QueueMarshalledAction(queueUrl string, cmd BackendCmd) error {
+// QueueMarshalledCmd marshals a BackendCmd into JSON and sends it to the specified queue URL.
+//
+// Parameters:
+//   - queueUrl: The URL of the queue where the message should be sent.
+//   - cmd: The BackendCmd to be marshalled and sent.
+//
+// Returns:
+//   - error: An error if the marshalling or sending fails, otherwise nil.
+func QueueMarshalledCmd(queueUrl string, cmd BackendCmd) error {
 	bodyBytes, err := json.Marshal(cmd)
 	if err != nil {
-		return err
+		return fmt.Errorf("json.Marshal / %w", err)
 	}
 	return QueueMessage(queueUrl, string(bodyBytes[:]))
 }
 
-func UnmarshallQueuedAction(record events.SQSMessage) (BackendCmd, error) {
+// UnmarshallQueuedCmd takes an SQSMessage record, unmarshals its JSON-encoded body
+// to returns a BackendCmd struct.
+//
+// Parameters:
+//   - record: events.SQSMessage containing the JSON-encoded command in its Body.
+//
+// Returns:
+//   - BackendCmd: The unmarshalled command.
+//   - error: Any error encountered during the unmarshalling process.
+func UnmarshallQueuedCmd(record events.SQSMessage) (BackendCmd, error) {
 	cmd := BackendCmd{}
 	err := json.Unmarshal([]byte(record.Body), &cmd)
 	return cmd, err
 }
 
-func MarshalCustomIDAction(cmd BackendCmd) (string, error) {
+// MarshalCustomID marshals a BackendCmd into a JSON string and ensures
+// the resulting string does not exceed 100 characters, as required by
+// the Discord API for CustomIDs. If the marshaled JSON exceeds this
+// limit, an error is returned.
+func MarshalCustomID(cmd BackendCmd) (string, error) {
 	bodyBytes, err := json.Marshal(cmd)
+	if err != nil {
+		return "", fmt.Errorf("json.Marshal / %w", err)
+	}
+	if len(bodyBytes) > 100 {
+		return "", fmt.Errorf("generated CustomID is longer than 100 characters which breaks Discord API")
+	}
 	return string(bodyBytes[:]), err
 }
 
-func UnmarshallCustomIDAction(customID string) (BackendCmd, error) {
+// UnmarshallCustomID unmarshals a Discord CustomID back into a BackendCmd
+func UnmarshallCustomID(customID string) (BackendCmd, error) {
 	cmd := BackendCmd{}
 	err := json.Unmarshal([]byte(customID), &cmd)
 	return cmd, err
