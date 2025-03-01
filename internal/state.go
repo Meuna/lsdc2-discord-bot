@@ -79,6 +79,7 @@ type ServerSpec struct {
 	ServerCount   int               `json:"severCount"`
 }
 
+// MissingField returns a list of required ServerSpec fields
 func (s ServerSpec) MissingField() []string {
 	missingFields := []string{}
 	if s.Name == "" {
@@ -100,6 +101,7 @@ func (s ServerSpec) MissingField() []string {
 	return missingFields
 }
 
+// OpenPorts returns a string representation of ServerSpec ports
 func (s ServerSpec) OpenPorts() []string {
 	keys := make([]string, len(s.PortMap))
 
@@ -111,6 +113,8 @@ func (s ServerSpec) OpenPorts() []string {
 	return keys
 }
 
+// AwsEnvSpec returns a []*ecs.KeyValuePair representation of
+// the ServerSpec environment variables
 func (s *ServerSpec) AwsEnvSpec() []*ecs.KeyValuePair {
 	envArray := make([]*ecs.KeyValuePair, len(s.EnvMap))
 	idx := 0
@@ -121,6 +125,8 @@ func (s *ServerSpec) AwsEnvSpec() []*ecs.KeyValuePair {
 	return envArray
 }
 
+// AwsPortSpec returns a []*ecs.PortMapping representation of
+// the ServerSpec ports
 func (s *ServerSpec) AwsPortSpec() []*ecs.PortMapping {
 	portArray := make([]*ecs.PortMapping, len(s.PortMap))
 	idx := 0
@@ -136,6 +142,8 @@ func (s *ServerSpec) AwsPortSpec() []*ecs.PortMapping {
 	return portArray
 }
 
+// AwsIpPermissionSpec returns a []*ec2.IpPermission representation of
+// the ServerSpec ports and protocols
 func (s *ServerSpec) AwsIpPermissionSpec() []*ec2.IpPermission {
 	permissions := make([]*ec2.IpPermission, len(s.PortMap))
 	idx := 0
@@ -180,6 +188,8 @@ const (
 	TaskRunning
 )
 
+// GetTaskStatus return a simplified ECS task lifecycle
+// TaskStarting > TaskRunning > TaskStopping > TaskStopped
 func GetTaskStatus(task *ecs.Task) int {
 	if (task == nil) || *task.LastStatus == ecs.DesiredStatusStopped {
 		return TaskStopped
