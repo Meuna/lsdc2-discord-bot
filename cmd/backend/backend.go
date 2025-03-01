@@ -361,8 +361,8 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 		ParentID: gc.ChannelCategoryID,
 		PermissionOverwrites: []*discordgo.PermissionOverwrite{
 			internal.PrivateChannelOverwrite(args.GuildID),
-			internal.ViewAppcmdOverwrite(gc.AdminRoleID),
-			internal.AppcmdOverwrite(gc.UserRoleID),
+			internal.ViewHistoryAppcmdOverwrite(gc.AdminRoleID),
+			internal.HistoryAppcmdOverwrite(gc.UserRoleID),
 		},
 	})
 	if err != nil {
@@ -579,7 +579,7 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Welcom
 		ParentID: lsdc2Category.ID,
 		PermissionOverwrites: []*discordgo.PermissionOverwrite{
 			internal.PrivateChannelOverwrite(args.GuildID),
-			internal.ViewAppcmdOverwrite(gc.AdminRoleID),
+			internal.ViewHistoryAppcmdOverwrite(gc.AdminRoleID),
 		},
 	})
 	if err != nil {
@@ -591,7 +591,7 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Welcom
 		Type:     discordgo.ChannelTypeGuildText,
 		ParentID: lsdc2Category.ID,
 		PermissionOverwrites: []*discordgo.PermissionOverwrite{
-			internal.ViewInviteOverwrite(gc.AdminRoleID),
+			internal.ViewHistoryInviteOverwrite(gc.AdminRoleID),
 		},
 	})
 	if err != nil {
