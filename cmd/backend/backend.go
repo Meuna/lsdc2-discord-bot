@@ -451,7 +451,7 @@ func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) error {
 	}
 
 	bot.Logger.Debug("destroy: unregister task", zap.String("channelID", inst.ChannelID))
-	if err = internal.DeregisterTaskFamiliy(inst.TaskFamily); err != nil {
+	if err = internal.DeregisterTaskFamily(inst.TaskFamily); err != nil {
 		return fmt.Errorf("DeregisterTaskFamiliy / %w", err)
 	}
 
@@ -938,7 +938,7 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 	case internal.TaskStarting:
 		bot.message(inst.ChannelID, "📢 Server task state: %s", *task.LastStatus)
 	case internal.TaskRunning:
-		ip, err := internal.GetTaskIP(&task, bot.Lsdc2Stack)
+		ip, err := internal.GetTaskIP(&task)
 		if err != nil {
 			ip = "error retrieving ip"
 		}
