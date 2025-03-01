@@ -17,11 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/ssm"
 )
 
-//    __________ __  ___
-//   / ___/ ___//  |/  /
-//   \__ \\__ \/ /|_/ /
-//  ___/ /__/ / /  / /
-// /____/____/_/  /_/
+//===== Section: SSM
 
 // GetParameter retrieves the value of a parameter from AWS Systems Manager Parameter Store.
 // The parameter is assumed to be encrypted using AWS managed key.
@@ -50,11 +46,7 @@ func GetParameter(name string) (string, error) {
 	return *param.Parameter.Value, nil
 }
 
-//     __                    __        __
-//    / /   ____ _____ ___  / /_  ____/ /___ _
-//   / /   / __ `/ __ `__ \/ __ \/ __  / __ `/
-//  / /___/ /_/ / / / / / / /_/ / /_/ / /_/ /
-// /_____/\__,_/_/ /_/ /_/_.___/\__,_/\__,_/
+//===== Section: Lambda
 
 func Json200(msg string) events.APIGatewayProxyResponse {
 	return events.APIGatewayProxyResponse{
@@ -106,11 +98,7 @@ func Error500() events.APIGatewayProxyResponse {
 	}
 }
 
-//    _____ ____   _____
-//   / ___// __ \ / ___/
-//   \__ \/ / / / \__ \
-//  ___/ / /_/ / ___/ /
-// /____/\___\_\/____/
+//===== Section: SQS
 
 func QueueMessage(queueUrl string, msg string) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
@@ -127,12 +115,7 @@ func QueueMessage(queueUrl string, msg string) error {
 	return err
 }
 
-//     ____                                    ____  ____
-//    / __ \__  ______  ____ _____ ___  ____  / __ \/ __ )
-//   / / / / / / / __ \/ __ `/ __ `__ \/ __ \/ / / / __  |
-//  / /_/ / /_/ / / / / /_/ / / / / / / /_/ / /_/ / /_/ /
-// /_____/\__, /_/ /_/\__,_/_/ /_/ /_/\____/_____/_____/
-//       /____/
+//===== Section: DynamoDB
 
 // DynamodbGetItem retrieves an item from a DynamoDB table.
 //
@@ -345,11 +328,7 @@ func DynamodbScanAttr(tableName string, column string) ([]string, error) {
 	return out, err
 }
 
-//     _________________
-//    / ____/ ____/ ___/
-//   / __/ / /    \__ \
-//  / /___/ /___ ___/ /
-// /_____/\____//____/
+//===== Section: ECS
 
 // Default ECS tag value
 func ecsTags() []*ecs.Tag {
@@ -553,11 +532,7 @@ func DescribeTask(inst ServerInstance, stack Lsdc2Stack) (*ecs.Task, error) {
 	return resultDt.Tasks[0], nil
 }
 
-//     _______________
-//    / ____/ ____/__ \
-//   / __/ / /    __/ /
-//  / /___/ /___ / __/
-// /_____/\____//____/
+//===== Section: EC2
 
 // Default EC2 tag value
 func ec2Tags(resType string) []*ec2.TagSpecification {
@@ -746,11 +721,7 @@ func GetTaskIP(task *ecs.Task) (string, error) {
 	return *resultDni.NetworkInterfaces[0].Association.PublicIp, nil
 }
 
-//    __________
-//   / ___/__  /
-//   \__ \ /_ <
-//  ___/ /__/ /
-// /____/____/
+//===== Section: S3
 
 // PresignGetS3Object generates a pre-signed URL for downloading an object
 // from an S3 bucket.
