@@ -59,7 +59,7 @@ func (bot Backend) handleSQSEvent(event events.SQSEvent) {
 	bot.Logger.Info("received SQS event")
 
 	for _, msg := range event.Records {
-		cmd, err := internal.UnmarshallQueuedAction(msg)
+		cmd, err := internal.UnmarshallQueuedCmd(msg)
 		if err != nil {
 			bot.Logger.Error("error in handleSQSEvent",
 				zap.String("culprit", "UnmarshallQueuedAction"),
