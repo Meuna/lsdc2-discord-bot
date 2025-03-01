@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -143,7 +144,7 @@ func DeleteGuildsCommands(sess *discordgo.Session, appID string, guildID string)
 func CommandsWithNameInList(cmd []*discordgo.ApplicationCommand, names []string) []*discordgo.ApplicationCommand {
 	filteredCmd := []*discordgo.ApplicationCommand{}
 	for _, cmd := range cmd {
-		if Contains(names, cmd.Name) {
+		if slices.Contains(names, cmd.Name) {
 			filteredCmd = append(filteredCmd, cmd)
 		}
 	}

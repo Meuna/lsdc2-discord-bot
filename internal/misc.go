@@ -11,16 +11,6 @@ func Pointer[T any](d T) *T {
 	return &d
 }
 
-func Contains(s []string, str string) bool {
-	for _, v := range s {
-		if v == str {
-			return true
-		}
-	}
-
-	return false
-}
-
 func GenMacWithTTL(key []byte, msg []byte, ttl int) (mac []byte, eol int64) {
 	eol = time.Now().Unix() + int64(ttl)
 	mac = computeMac(key, msg, eol)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 
 	"github.com/meuna/lsdc2-discord-bot/internal"
 	"go.uber.org/zap"
@@ -187,7 +188,7 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 		return
 	}
 
-	if internal.Contains(gameList, spec.Name) && !args.Overwrite {
+	if slices.Contains(gameList, spec.Name) && !args.Overwrite {
 		bot.Logger.Info("game already registered", zap.String("gameName", spec.Name))
 		bot.followUp(cmd, "🚫 Game %s already registered and overwrite=False", spec.Name)
 		return
@@ -807,7 +808,7 @@ func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 		return
 	}
 
-	if internal.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
+	if slices.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
 		bot.Logger.Debug("invite: add member role",
 			zap.String("guildID", args.GuildID),
 			zap.String("who", target.User.Username),
@@ -815,11 +816,11 @@ func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 		)
 		sess.GuildMemberRoleAdd(args.GuildID, args.TargetID, gc.UserRoleID)
 		bot.message(gc.WelcomeChannelID, ":call_me: Welcome %s !", target.User.Username)
-	} else if !internal.Contains(target.Roles, gc.UserRoleID) {
+	} else if !slices.Contains(target.Roles, gc.UserRoleID) {
 		bot.followUp(cmd, "🚫 %s is not an allowed LSDC2 user", target.User.Username)
 		return
 	}
-	if internal.Contains(serverChannelIDs, args.ChannelID) {
+	if slices.Contains(serverChannelIDs, args.ChannelID) {
 		bot.Logger.Debug("invite: add member to channel",
 			zap.String("guildID", args.GuildID),
 			zap.String("who", target.User.Username),
@@ -885,7 +886,7 @@ func (bot Backend) kickMember(cmd internal.BackendCmd) {
 		return
 	}
 
-	if internal.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
+	if slices.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
 		if args.ChannelID == gc.AdminChannelID {
 			bot.Logger.Debug("kick: remove member role",
 				zap.String("guildID", args.GuildID),
