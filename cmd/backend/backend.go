@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -823,8 +824,6 @@ func (bot Backend) _deleteRoles(args internal.GoodbyeArgs, gc *internal.GuildCon
 // both be added to the LSDC2 User and to the channel. When run by an LSDC2
 // User from a server channel, the target will only be added to the server
 // channel if he already have the LSDC2 User role.
-//
-// TODO: correclty implement the documented logic
 func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.InviteArgs)
 
@@ -835,75 +834,76 @@ func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Retrieve requester membership
-	bot.Logger.Debug("Invite: retrieve requester member", zap.String("guildID", args.GuildID), zap.String("requesterID", args.RequesterID))
-	requester, err := sess.GuildMember(args.GuildID, args.RequesterID)
+	requester, target, gc, err := bot._getRequesterTargetAndGuildData(sess, args.RequesterID, args.TargetID, args.GuildID)
 	if err != nil {
-		bot.Logger.Error("error in inviteMember", zap.String("culprit", "GuildMember"), zap.Error(err))
+		bot.Logger.Error("error in inviteMember", zap.String("culprit", "_getRequesterTargetAndGuildData"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
-	// Retrieve target membership
-	bot.Logger.Debug("invite: retrieve target member", zap.String("guildID", args.GuildID), zap.String("targetID", args.TargetID))
-	target, err := sess.GuildMember(args.GuildID, args.TargetID)
-	if err != nil {
-		bot.Logger.Error("error in inviteMember", zap.String("culprit", "GuildMember"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
+	// Early return if the target is already an admin
+	if slices.Contains(target.Roles, gc.AdminRoleID) {
+		bot.followUp(cmd, "%s is already an admin 😅", target.User.GlobalName)
 		return
 	}
 
-	// Retrieve LSDC2 Admin role from guild conf
-	bot.Logger.Debug("Invite: get guild conf",
-		zap.String("guildID", args.GuildID),
-		zap.String("who", target.User.Username),
-		zap.String("by", requester.User.Username),
-	)
-	gc := internal.GuildConf{}
-	if err = internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gc); err != nil {
-		bot.Logger.Error("error in inviteMember", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	// Add the user to the LSDC2 group
-	// TODO: check if the user is already a LSDC2 Admin/User and improve bot replies.
-	if slices.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
+	// Assign the LSDC2 User role to the target if needed
+	targetIsUser := slices.Contains(target.Roles, gc.UserRoleID)
+	requesterIsAdmin := args.RequesterIsAdmin || slices.Contains(requester.Roles, gc.AdminRoleID)
+	if requesterIsAdmin && !targetIsUser {
 		bot.Logger.Debug("invite: add member role",
 			zap.String("guildID", args.GuildID),
-			zap.String("who", target.User.Username),
-			zap.String("by", requester.User.Username),
+			zap.String("who", target.User.GlobalName),
+			zap.String("by", requester.User.GlobalName),
 		)
 		sess.GuildMemberRoleAdd(args.GuildID, args.TargetID, gc.UserRoleID)
-		bot.message(gc.WelcomeChannelID, ":call_me: Welcome %s !", target.User.Username)
-	} else if !slices.Contains(target.Roles, gc.UserRoleID) {
-		bot.followUp(cmd, "🚫 %s is not an allowed LSDC2 user", target.User.Username)
+		bot.message(gc.WelcomeChannelID, "🤙 Welcome %s !", target.User.GlobalName)
+
+		targetIsUser = true
+	}
+
+	// Early return if we are in the administration channel, the job is completed
+	if args.ChannelID == gc.AdminChannelID {
+		bot.followUp(cmd, "✅ %s invite done !", target.User.GlobalName)
 		return
 	}
 
-	// Retrieve list of game channels
-	bot.Logger.Debug("Invite: get list of channel",
-		zap.String("guildID", args.GuildID),
-		zap.String("who", target.User.Username),
-		zap.String("by", requester.User.Username),
-	)
-	serverChannelIDs, err := internal.DynamodbScanAttr(bot.InstanceTable, "key")
-	if err != nil {
-		bot.Logger.Error("error in inviteMember", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
+	// If we continue, this means that we are may add the user to a server channel
+
+	// First, early return if the target is not a LSDC2 User. This means a
+	// non-admin try to invite a non user.
+	if !targetIsUser {
+		bot.followUp(cmd, "🚫 %s is not an allowed LSDC2 user", target.User.GlobalName)
+		return
+	}
+
+	// Then, ensure that the channel is a server channel
+	if err := bot._ensureChannelIsAServer(args.ChannelID); err != nil {
+		bot.Logger.Error("error in inviteMember", zap.String("culprit", "_ensureChannelIsAServer"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	// The command was run from a server channel: also add the user to this channel
-	if slices.Contains(serverChannelIDs, args.ChannelID) {
+
+	// Then, check if the user is not already in the channel
+	hasView, err := internal.HasUserView(sess, args.ChannelID, args.TargetID)
+	if err != nil {
+		bot.Logger.Error("error in inviteMember", zap.String("culprit", "HasUserView"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	if hasView {
+		bot.followUp(cmd, "🤔 %s is already in this channel", target.User.GlobalName)
+	} else {
 		bot.Logger.Debug("invite: add member to channel",
 			zap.String("guildID", args.GuildID),
-			zap.String("who", target.User.Username),
-			zap.String("by", requester.User.Username),
+			zap.String("who", target.User.GlobalName),
+			zap.String("by", requester.User.GlobalName),
 		)
 		internal.AddUserView(sess, args.ChannelID, args.TargetID)
+		bot.followUp(cmd, "🤙 Welcome %s ! This channel controls a server. "+
+			"Run the command /start, wait a few minute a join the server at the "+
+			"provided IP and ports", target.User.GlobalName)
 	}
-
-	bot.followUp(cmd, "%s added !", target.User.Username)
 }
 
 // kickMember can only be executed by and admin and remove a user from the
@@ -922,78 +922,129 @@ func (bot Backend) kickMember(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Retrieve requester membership
-	bot.Logger.Debug("kick: retrieve requester member", zap.String("guildID", args.GuildID), zap.String("requesterID", args.RequesterID))
-	requester, err := sess.GuildMember(args.GuildID, args.RequesterID)
+	requester, target, gc, err := bot._getRequesterTargetAndGuildData(sess, args.RequesterID, args.TargetID, args.GuildID)
 	if err != nil {
-		bot.Logger.Error("error in kickMember", zap.String("culprit", "GuildMember"), zap.Error(err))
+		bot.Logger.Error("error in inviteMember", zap.String("culprit", "_getRequesterTargetAndGuildData"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
-	// Retrieve target membership
-	bot.Logger.Debug("kick: retrieve target member", zap.String("guildID", args.GuildID), zap.String("targetID", args.TargetID))
-	target, err := sess.GuildMember(args.GuildID, args.TargetID)
-	if err != nil {
-		bot.Logger.Error("error in kickMember", zap.String("culprit", "GuildMember"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	// Retrieve LSDC2 Admin role from guild conf
-	bot.Logger.Debug("kick: get guild conf",
-		zap.String("guildID", args.GuildID),
-		zap.String("who", target.User.Username),
-		zap.String("by", requester.User.Username),
-	)
-	gc := internal.GuildConf{}
-	if err = internal.DynamodbGetItem(bot.GuildTable, args.GuildID, &gc); err != nil {
-		bot.Logger.Error("error in kickMember", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	// Retrieve list of game channel
-	// TODO: only fetch the channel when needed (full kick)
-	bot.Logger.Debug("kick: get list of channel",
-		zap.String("guildID", args.GuildID),
-		zap.String("who", target.User.Username),
-		zap.String("by", requester.User.Username),
-	)
-	serverChannelIDs, err := internal.DynamodbScanAttr(bot.InstanceTable, "key")
-	if err != nil {
-		bot.Logger.Error("error in kickMember", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
-	// Only continue if the requester is an admin
-	// TODO: ensure the target is not an admin
-	// TODO: change the code into early return for readability
-	if slices.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
-		if args.ChannelID == gc.AdminChannelID {
-			// A kick command from the admin channel = kick from all LSDC2 role ...
-			bot.Logger.Debug("kick: remove member role",
-				zap.String("guildID", args.GuildID),
-				zap.String("who", target.User.Username),
-				zap.String("by", requester.User.Username),
-			)
-			// ... and all servers
-			sess.GuildMemberRoleRemove(args.GuildID, args.TargetID, gc.UserRoleID)
-			for _, channelID := range serverChannelIDs {
-				internal.RemoveUserView(sess, channelID, args.TargetID)
-			}
-			bot.message(gc.WelcomeChannelID, ":middle_finger: in for face %s !", target.User.Username)
-		} else {
-			// A kick from a server channel = only removal from the server channel
-			internal.RemoveUserView(sess, args.ChannelID, args.TargetID)
-		}
-	} else {
+	// Early return if the requester is not an admin
+	if !args.RequesterIsAdmin && !slices.Contains(requester.Roles, gc.AdminRoleID) {
 		bot.followUp(cmd, "🚫 not allowed")
 		return
 	}
 
-	bot.followUp(cmd, "%s kicked !", target.User.Username)
+	// Early return if the target is an admin
+	if slices.Contains(target.Roles, gc.AdminRoleID) {
+		bot.followUp(cmd, "🚫 not allowed, %s is an admin", target.User.GlobalName)
+		return
+	}
+
+	// Early return if the command is run from the admin channel
+	if args.ChannelID == gc.AdminChannelID {
+		// A kick command from the admin channel = kick from LSDC2 role ...
+		bot.Logger.Debug("kick: remove member role",
+			zap.String("guildID", args.GuildID),
+			zap.String("who", target.User.GlobalName),
+			zap.String("by", requester.User.GlobalName),
+		)
+		sess.GuildMemberRoleRemove(args.GuildID, args.TargetID, gc.UserRoleID)
+
+		// ... and all servers
+		bot.Logger.Debug("kick: get list of channel", zap.String("guildID", args.GuildID))
+		serverChannels, err := internal.DynamodbScanAttr(bot.InstanceTable, "key")
+		if err != nil {
+			bot.Logger.Error("error in kickMember", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
+			bot.followUp(cmd, "🚫 Internal error")
+			return
+		}
+		for _, chanID := range serverChannels {
+			err = internal.RemoveUserView(sess, chanID, args.TargetID)
+			if err != nil {
+				bot.Logger.Error("error in kickMember", zap.String("culprit", "RemoveUserView"), zap.Error(err))
+				bot.followUp(cmd, "🚫 Internal error")
+				return
+			}
+		}
+
+		bot.message(gc.WelcomeChannelID, "You're out %s, in your face ! 🖕", target.User.GlobalName)
+		bot.followUp(cmd, "✅ %s kick done !", target.User.GlobalName)
+		return
+	}
+
+	// If we continue, this means that we are may kick the user to a server channel
+
+	// First, ensure that the channel is a server channel
+	if err := bot._ensureChannelIsAServer(args.ChannelID); err != nil {
+		bot.Logger.Error("error in kickMember", zap.String("culprit", "_ensureChannelIsAServer"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Then, check if the user has view in the channel
+	hasView, err := internal.HasUserView(sess, args.ChannelID, args.TargetID)
+	if err != nil {
+		bot.Logger.Error("error in kickMember", zap.String("culprit", "HasUserView"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	if !hasView {
+		bot.followUp(cmd, "🤔 %s is not in this channel", target.User.GlobalName)
+	} else {
+		bot.Logger.Debug("invite: kick member to channel",
+			zap.String("guildID", args.GuildID),
+			zap.String("who", target.User.GlobalName),
+			zap.String("by", requester.User.GlobalName),
+		)
+		internal.RemoveUserView(sess, args.ChannelID, args.TargetID)
+		bot.followUp(cmd, "✅ %s kick done !", target.User.GlobalName)
+	}
+}
+
+// _getRequesterTargetAndGuildData is a simple helper for the invite/kick functions
+func (bot Backend) _getRequesterTargetAndGuildData(sess *discordgo.Session, requesterID string, targetID string, guildID string) (
+	requester *discordgo.Member,
+	target *discordgo.Member,
+	gc internal.GuildConf,
+	err error,
+) {
+	// Retrieve requester membership
+	bot.Logger.Debug("kick: retrieve requester member", zap.String("guildID", guildID), zap.String("requesterID", requesterID))
+	requester, err = sess.GuildMember(guildID, requesterID)
+	if err != nil {
+		err = fmt.Errorf("GuildMember / %w", err)
+		return
+	}
+
+	// Retrieve target membership
+	bot.Logger.Debug("kick: retrieve target member", zap.String("guildID", guildID), zap.String("targetID", targetID))
+	target, err = sess.GuildMember(guildID, targetID)
+	if err != nil {
+		err = fmt.Errorf("GuildMember / %w", err)
+		return
+	}
+
+	// Retrieve the guild conf
+	bot.Logger.Debug("kick: get guild conf", zap.String("guildID", guildID))
+	if err = internal.DynamodbGetItem(bot.GuildTable, guildID, &gc); err != nil {
+		err = fmt.Errorf("DynamodbGetItem / %w", err)
+		return
+	}
+	return
+}
+
+// _ensureChannelIsAServer returns an error if the channel is not of a server
+func (bot Backend) _ensureChannelIsAServer(channelID string) error {
+	inst := internal.ServerInstance{}
+	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	if err != nil {
+		return fmt.Errorf("DynamodbGetItem / %w", err)
+	}
+	if inst.ChannelID != channelID {
+		return errors.New("someone managed to run the invite command in a non-game channel")
+	}
+	return nil
 }
 
 //===== Section: bot reply helpers
