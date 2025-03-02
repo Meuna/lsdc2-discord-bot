@@ -850,7 +850,7 @@ func (bot Frontend) autocompleteSpinup() (events.APIGatewayProxyResponse, error)
 
 	gameList, err := internal.DynamodbScanAttr(bot.SpecTable, "key")
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("DynamodbScanAttr / %s", err) // FIXME: change %s to %w
+		return internal.Error500(), fmt.Errorf("DynamodbScanAttr / %w", err)
 	}
 
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(gameList))
