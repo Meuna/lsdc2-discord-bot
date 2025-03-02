@@ -29,6 +29,8 @@ func main() {
 	lambda.StartWithOptions(handleRequest, lambda.WithContext(ctx))
 }
 
+// handleRequest processes incoming Lambda function URL requests and routes them
+// to the appropriate handler based on the request path.
 func handleRequest(ctx context.Context, request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
 	bot := ctx.Value("bot").(Frontend)
 
@@ -53,21 +55,25 @@ type Frontend struct {
 	internal.BotEnv
 }
 
-//
-//	Upload route
-//
+//===== Section: upload route
 
 //go:embed upload.html
 var uploadPage string
 
+// uploadRoute handles the upload route for the bot. It performs the following steps:
+//  1. Parses the query parameters from the request.
+//  2. Verifies the MAC and TTL to ensure the request is valid.
+//  3. Retrieves the server instance from DynamoDB using the channel ID.
+//  4. Generates a presigned S3 PUT URL for uploading the save game.
+//  5. Renders an HTML page with the presigned URL embedded.
 func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
-	key := []byte(bot.ClientSecret)
 	serverName, channelID, mac, eol, err := bot._parseQuery(request)
 	if err != nil {
 		return internal.Error500(), fmt.Errorf("_parseQuery / %w", err)
 	}
 
 	// Verify MAC and TTL
+	key := []byte(bot.ClientSecret)
 	if !internal.VerifyMacWithTTL(key, []byte(channelID), eol, mac) {
 		return internal.Error401("401: MAC verification failed"), nil
 	}
@@ -82,7 +88,7 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 		return internal.Error500(), fmt.Errorf("DynamodbGetItem / %w", err)
 	}
 	if inst.SpecName == "" {
-		return internal.Error500(), fmt.Errorf("instance %w not found", channelID) // FIXME: replace %w with %s
+		return internal.Error500(), fmt.Errorf("instance %s not found", channelID)
 	}
 
 	// Presign S3 PUT
@@ -91,12 +97,14 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 		return internal.Error500(), fmt.Errorf("PresignGetS3Object / %w", err)
 	}
 
+	// Render HTML from go:embed template
 	r := strings.NewReplacer("{{serverName}}", serverName, "{{presignedUrl}}", url)
 	uploadPageWithPutUrl := r.Replace(uploadPage)
 
 	return internal.Html200(uploadPageWithPutUrl), nil
 }
 
+// _parseQuery extracts the query parameters from the given LambdaFunctionURLRequest
 func (bot Frontend) _parseQuery(request events.LambdaFunctionURLRequest) (serverName string, channelID string, mac []byte, eol int64, err error) {
 	missingKeys := []string{}
 	serverName, ok := request.QueryStringParameters["serverName"]
@@ -129,10 +137,18 @@ func (bot Frontend) _parseQuery(request events.LambdaFunctionURLRequest) (server
 	return
 }
 
-//
-//	Discord route
-//
+//===== Section: Discord route
 
+// discordRoute handles incoming Discord interactions from a Lambda function URL request.
+// It verifies the Discord signature, unmarshals the request body into a Discord interaction,
+// and routes the interaction based on its type.
+//
+// Supported interaction types:
+// - Ping
+// - ApplicationCommand
+// - MessageComponent
+// - ApplicationCommandAutocomplete
+// - ModalSubmit
 func (bot Frontend) discordRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
 	if !bot.checkDiscordSignature(request) {
 		return internal.Error401(""), errors.New("signature check failed")
@@ -169,6 +185,8 @@ func (bot Frontend) discordRoute(request events.LambdaFunctionURLRequest) (event
 	}
 }
 
+// checkDiscordSignature verifies the signature of a Discord
+// request to prove bot private key ownership
 func (bot Frontend) checkDiscordSignature(request events.LambdaFunctionURLRequest) bool {
 	pkey, _ := hex.DecodeString(bot.Pkey)
 	sig, _ := hex.DecodeString(request.Headers["x-signature-ed25519"])
@@ -177,6 +195,8 @@ func (bot Frontend) checkDiscordSignature(request events.LambdaFunctionURLReques
 	return ed25519.Verify(pkey, pl, sig)
 }
 
+// routeCommand routes the incoming Discord ApplicationCommand to the
+// appropriate handler based on the command name.
 func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	bot.Logger.Debug("routing command", zap.String("cmd", acd.Name))
@@ -212,8 +232,11 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.Lambd
 	}
 }
 
+// routeMessageComponent routes the incoming Discord MessageComponent
+// to the appropriate handler based on command name, as extracted from
+// the custom ID.
 func (bot Frontend) routeMessageComponent(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
-	msd := itn.ModalSubmitData()
+	msd := itn.MessageComponentData()
 
 	cmd, err := internal.UnmarshallCustomID(msd.CustomID)
 	if err != nil {
@@ -231,6 +254,9 @@ func (bot Frontend) routeMessageComponent(itn discordgo.Interaction) (events.API
 	}
 }
 
+// routeModalSubmit routes the incoming Discord ModalSubmit
+// to the appropriate handler based on command name, as extracted from
+// the custom ID.
 func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
 
@@ -259,6 +285,8 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 	}
 }
 
+// routeAutocomplete routes the incoming Discord ApplicationCommandAutocomplete
+// to the appropriate handler based on command name.
 func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	bot.Logger.Debug("routing autocomplete", zap.String("cmd", acd.Name))
@@ -271,14 +299,32 @@ func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGate
 	}
 }
 
-//
-//	Frontend loop (message component and modal roundtrip)
-//
+//===== Section: frontend loop (message component and modal roundtrip)
 
+// In this section, "frontend loop" or "frontloop" refer to the fact that the
+// frontend may call itself. This is the case if a command returns a
+// MessageComponent or Modal interaction: the bot call sequence looks like this:
+// 	1. ApplicationCommand handling (frontent)
+//  2. MessageComponent/Modal handling (frontend)
+//	3. Backend handling
+//
+// The transmission of intent between the various steps use the BackendCmd structure.
+// Between steps 1 and 2, the BackendCmd is marshalled into CustomID, which has a
+// 100 bytes length limit. Between step 1/2 and 3, the BackendCmd is is marshalled
+// in JSON over an AWS SQS Queue.
+//
+// Ref: https://discord.com/developers/docs/interactions/message-components#custom-id
+
+// gameRegisterFrontloop is the first function triggered by a game registration
+// command. The function branches between 2 cases:
+//  1. If the command was send w/o the SpecUrl option, the function returns a
+//     modal to directly prompts the user for the ServerSpec.
+//  2. Else, skip the frontloop and directly calls the backend service to
+//     register the game.
 func (bot Frontend) gameRegisterFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 
-	// Get chat command arguments
+	// Get command arguments
 	args := internal.RegisterGameArgs{}
 	for _, opt := range acd.Options {
 		if opt.Name == internal.RegisterGameAPISpecUrlOpt {
@@ -311,6 +357,8 @@ func (bot Frontend) gameRegisterFrontloop(itn discordgo.Interaction) (events.API
 	}
 }
 
+// welcomeGuildFrontloop is the first function triggered by a guild welcoming
+// command. The function simply reply with a confirmation modal.
 func (bot Frontend) welcomeGuildFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	cmd := internal.BackendCmd{
 		Args: &internal.WelcomeArgs{
@@ -322,6 +370,8 @@ func (bot Frontend) welcomeGuildFrontloop(itn discordgo.Interaction) (events.API
 	return bot.confirm(cmd, title, confimationText)
 }
 
+// guildGoodbyeFrontloop is the first function triggered by a guild goodbyeing
+// command. The function simply reply with a confirmation modal.
 func (bot Frontend) guildGoodbyeFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	cmd := internal.BackendCmd{
 		Args: &internal.GoodbyeArgs{
@@ -333,6 +383,14 @@ func (bot Frontend) guildGoodbyeFrontloop(itn discordgo.Interaction) (events.API
 	return bot.confirm(cmd, title, confimationText)
 }
 
+// serverDestructionFrontloop is the first function triggered by a server
+// destruction command. The function performs the following steps, then
+// reply with a confirmation modal.
+//  1. The server instances details are fetched from the DynamoDB table
+//  2. A first check ensure that the instance with the provided server name
+//     exists
+//  3. Then a check is made to ensure that the server is not currently running
+//  4. Finally, a confirmation modal is replied
 func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	serverName := acd.Options[0].StringValue()
@@ -375,6 +433,13 @@ func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (event
 	return bot.confirm(cmd, title, confimationText)
 }
 
+// serverCreationFrontloop is the first function triggered by a server creation
+// command. The function fetch the game spec details from DynamoDB table then
+// branches between 2 cases:
+//  1. If the spec requires parameters (as defined by the EnvParamMap field),
+//     the handler reply with a modal to prompt the parameters from the users.
+//  2. Else, skip the frontloop and directly calls the backend service to
+//     create the server instance.
 func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	gameName := acd.Options[0].StringValue()
@@ -416,15 +481,25 @@ func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.A
 	}
 }
 
-//
-//	Backend call
-//
+//===== Section: backend call
 
+// Functions in this section call the the backend to perform/finalise the
+// requested command.
+
+// callBackend queue up a BackendCmd for the backend
 func (bot Frontend) callBackend(cmd internal.BackendCmd) error {
 	bot.Logger.Debug("calling backend command", zap.Any("cmd", cmd))
 	return internal.QueueMarshalledCmd(bot.QueueUrl, cmd)
 }
 
+// genericConfirmedCall is used as the step 2 of a frontloop, after the step 1
+// replied with a confirmation modal.
+//
+// Note 1: this function is triggered AFTER user confirmation so the function
+// simply call the backend.
+//
+// Note 2: routing between step 1 and 2 has to be explicitly developped
+// (see routeModalSubmit).
 func (bot Frontend) genericConfirmedCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
 	cmd, err := internal.UnmarshallCustomID(msd.CustomID)
@@ -443,6 +518,9 @@ func (bot Frontend) genericConfirmedCall(itn discordgo.Interaction) (events.APIG
 	return bot.ackMessage()
 }
 
+// gameRegisterCall is used as the step 2 of a frontloop, after the step 1
+// replied with a configuration modal for the ServerSpec. The function
+// gathers the prompted spec and call the backend.
 func (bot Frontend) gameRegisterCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
 	cmd, err := internal.UnmarshallCustomID(msd.CustomID)
@@ -467,6 +545,9 @@ func (bot Frontend) gameRegisterCall(itn discordgo.Interaction) (events.APIGatew
 	return bot.ackMessage()
 }
 
+// serverCreationCall is used as the step 2 of a frontloop, after the step 1
+// replied with a server configuration modal. The function gathers the prompted
+// parameters and call the backend.
 func (bot Frontend) serverCreationCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
 	cmd, err := internal.UnmarshallCustomID(msd.CustomID)
@@ -494,6 +575,7 @@ func (bot Frontend) serverCreationCall(itn discordgo.Interaction) (events.APIGat
 	return bot.ackMessage()
 }
 
+// memberInviteCall calls the backend to handle invite command (no frontloop)
 func (bot Frontend) memberInviteCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	requester := itn.Member
@@ -518,6 +600,7 @@ func (bot Frontend) memberInviteCall(itn discordgo.Interaction) (events.APIGatew
 	return bot.ackMessage()
 }
 
+// memberKickCall calls the backend to handle kick command (no frontloop)
 func (bot Frontend) memberKickCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	requester := itn.Member
@@ -542,11 +625,19 @@ func (bot Frontend) memberKickCall(itn discordgo.Interaction) (events.APIGateway
 	return bot.ackMessage()
 }
 
-//
-//	Frontend commands
-//
+//===== Section: frontend commands
 
+// Functions in this section fully implement the requested command at the frontend level.
+
+// startServer starts a server for the given channel ID. It performs the
+// following steps:
+//  1. Retrieves the server instance details from DynamoDB.
+//  2. Verifies that the task is not already running or in the process of
+//     starting/stopping.
+//  3. Starts the server task if it is not already running.
+//  4. Updates the server instance with the new task ARN in DynamoDB.
 func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyResponse, error) {
+	// Retrieve server instance details
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
@@ -577,11 +668,14 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 		}
 	}
 
+	// Start the task
 	taskArn, err := internal.StartTask(inst, bot.Lsdc2Stack)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "StartTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
+
+	// Register the task ARN in the instance entry
 	inst.TaskArn = taskArn
 	err = internal.DynamodbPutItem(bot.InstanceTable, inst)
 	if err != nil {
@@ -591,7 +685,13 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	return bot.reply("✅ Server starting (wait few minutes)")
 }
 
+// stopServer stops the server for the given channel ID. It performs the
+// following steps:
+//  1. Retrieves the server instance details from DynamoDB.
+//  2. Verifies that the task is not already stop.
+//  3. If not, issues the stop request.
 func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse, error) {
+	// Retrieve server instance details
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
@@ -602,7 +702,7 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
-	// Check that the task is not yet running
+	// Check that the task is not already stopped
 	if inst.TaskArn == "" {
 		return bot.reply("🟥 Server offline")
 	} else {
@@ -611,15 +711,12 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
 			return bot.reply("🚫 Internal error")
 		}
-		if task != nil {
-			switch internal.GetTaskStatus(task) {
-			case internal.TaskStopped:
-				return bot.reply("🟥 Server offline")
-			}
-			// No match == we can issue a stop command
+		if task != nil && internal.GetTaskStatus(task) == internal.TaskStopped {
+			return bot.reply("🟥 Server offline")
 		}
 	}
 
+	// Issue the task stop request
 	bot.Logger.Debug("stoping: stop task", zap.String("channelID", inst.ChannelID))
 	if err = internal.StopTask(inst, bot.Lsdc2Stack); err != nil {
 		bot.Logger.Error("error in stopServer", zap.String("culprit", "StopTask"), zap.Error(err))
@@ -628,7 +725,10 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	return bot.reply("⚠️ Server is going offline")
 }
 
+// serverStatus retrieves the status of the server associated with the
+// given channel ID.
 func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyResponse, error) {
+	// Retrieve server instance details
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
@@ -639,13 +739,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 		return bot.reply("⚠️ This should not happen :thinking:. Are you in a server channel ?")
 	}
 
-	spec := internal.ServerSpec{}
-	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
-	if err != nil {
-		bot.Logger.Error("error in serverStatus", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-
+	// Status: offline
 	if inst.TaskArn == "" {
 		return bot.reply("🟥 Server offline")
 	}
@@ -655,6 +749,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 		return bot.reply("🚫 Internal error")
 	}
 
+	// Status: changing
 	switch internal.GetTaskStatus(task) {
 	case internal.TaskStopped:
 		return bot.reply("🟥 Server offline")
@@ -664,16 +759,26 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 		return bot.reply("⚠️ Server is starting. Please wait a few minutes")
 	}
 
+	// Status: online
 	ip, err := internal.GetTaskIP(task)
 	if err != nil {
 		bot.Logger.Error("error in serverStatus", zap.String("culprit", "GetTaskIP"), zap.Error(err))
 		return bot.reply(":thinking: Public IP not available, contact administrator")
 	}
+
+	spec := internal.ServerSpec{}
+	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	if err != nil {
+		bot.Logger.Error("error in serverStatus", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
 	return bot.reply("✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
 }
 
+// savegameDownload creates a pre-signed URL for the savegame file stored in
+// S3, for the given channel ID, and replies with the link.
 func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyResponse, error) {
-	// Check that we are in a server channel
+	// Retrieve server instance details
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
@@ -684,6 +789,7 @@ func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyRe
 		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
+	// TODO: reply with a bot.replyLink instead or add a comment as to why it is not possible
 	url, err := internal.PresignGetS3Object(bot.SaveGameBucket, inst.Name, time.Minute)
 	if err != nil {
 		bot.Logger.Error("error in savegameDownload", zap.String("culprit", "PresignGetS3Object"), zap.Error(err))
@@ -692,7 +798,11 @@ func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyRe
 	return bot.reply("Link to %s savegame: [Download](%s)", inst.Name, url)
 }
 
-func (bot Frontend) savegameUpload(channelID string, domainName string) (events.APIGatewayProxyResponse, error) {
+// savegameUpload creates a link protectec with a MAC and TTL, to the "upload"
+// route of the bot frontend address. When clicked, the user leaves Discord
+// to meet the bot in a web browser (see uploadRoute), with a web page to
+// upload a savegame file.
+func (bot Frontend) savegameUpload(channelID string, botDomain string) (events.APIGatewayProxyResponse, error) {
 	// Check that we are in a server channel
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
@@ -704,7 +814,7 @@ func (bot Frontend) savegameUpload(channelID string, domainName string) (events.
 		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
-	// And generate a signed url back to the bot
+	// Generate a signed url back to the bot
 	key := []byte(bot.ClientSecret)
 	msg := []byte(channelID)
 	ttl := 30
@@ -718,7 +828,7 @@ func (bot Frontend) savegameUpload(channelID string, domainName string) (events.
 
 	url := url.URL{
 		Scheme:   "https",
-		Host:     domainName,
+		Host:     botDomain,
 		Path:     "upload",
 		RawQuery: values.Encode(),
 	}
@@ -729,6 +839,9 @@ func (bot Frontend) savegameUpload(channelID string, domainName string) (events.
 // A bit hacky but it's a cheap way to avoid a table scan at each call
 var __choicesCache []*discordgo.ApplicationCommandOptionChoice
 
+// autocompleteSpinup returns an autocomplete response with the choices of
+// registered games. Note that user inputs is completly ignored: it not
+// used to filter the choices.
 func (bot Frontend) autocompleteSpinup() (events.APIGatewayProxyResponse, error) {
 	// Fast-track the cached reply
 	if __choicesCache != nil {
@@ -753,10 +866,10 @@ func (bot Frontend) autocompleteSpinup() (events.APIGatewayProxyResponse, error)
 	return bot.replyAutocomplete(choices)
 }
 
-//
-//	Bot reply helpers
-//
+//===== Section: bot reply helpers
 
+// ackMessage acknowledge to Discord that the ApplicationCommand is being handled
+// (Discord displays "bot thinking ...")
 func (bot Frontend) ackMessage() (events.APIGatewayProxyResponse, error) {
 	itnResp := discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
@@ -769,6 +882,8 @@ func (bot Frontend) ackMessage() (events.APIGatewayProxyResponse, error) {
 	return internal.Json200(string(jsonBytes[:])), nil
 }
 
+// ackComponent acknowledge to Discord that the MessageComponent is being handled
+// (Discord displays "bot thinking ...")
 func (bot Frontend) ackComponent() (events.APIGatewayProxyResponse, error) {
 	itnResp := discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredMessageUpdate,
@@ -781,6 +896,7 @@ func (bot Frontend) ackComponent() (events.APIGatewayProxyResponse, error) {
 	return internal.Json200(string(jsonBytes[:])), nil
 }
 
+// reply replies the specified message
 func (bot Frontend) reply(msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
 	itnResp := discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -796,6 +912,7 @@ func (bot Frontend) reply(msg string, fmtarg ...interface{}) (events.APIGatewayP
 	return internal.Json200(string(jsonBytes[:])), nil
 }
 
+// reply replies the specified link with a link button
 func (bot Frontend) replyLink(url string, label string, msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
 	itnResp := discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -821,6 +938,8 @@ func (bot Frontend) replyLink(url string, label string, msg string, fmtarg ...in
 	return internal.Json200(string(jsonBytes[:])), nil
 }
 
+// replyAutocomplete replies to an autocomplete request with the
+// specified choices
 func (bot Frontend) replyAutocomplete(choices []*discordgo.ApplicationCommandOptionChoice) (events.APIGatewayProxyResponse, error) {
 	itnResp := discordgo.InteractionResponse{
 		Type: discordgo.InteractionApplicationCommandAutocompleteResult,
@@ -835,6 +954,9 @@ func (bot Frontend) replyAutocomplete(choices []*discordgo.ApplicationCommandOpt
 	return internal.Json200(string(jsonBytes[:])), nil
 }
 
+// confirm replies with a modal containing a single TextInput with the
+// specified message. It does not strictly looks like a confirmation
+// modal but this is the closest found as of this commit.
 func (bot Frontend) confirm(cmd internal.BackendCmd, title string, msg string) (events.APIGatewayProxyResponse, error) {
 	customID, err := internal.MarshalCustomID(cmd)
 	if err != nil {
@@ -870,6 +992,8 @@ func (bot Frontend) confirm(cmd internal.BackendCmd, title string, msg string) (
 	return internal.Json200(string(jsonBytes[:])), nil
 }
 
+// modal replies with a modal containing as many TextInputShort as
+// specified by the paramSpec argument.
 func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[string]string) (events.APIGatewayProxyResponse, error) {
 	customID, err := internal.MarshalCustomID(cmd)
 	if err != nil {
@@ -909,6 +1033,10 @@ func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[s
 	return internal.Json200(string(jsonBytes[:])), nil
 }
 
+// textPrompt replies with a modal containing a single TextInput.
+// It is very similar to bot.confirm: the only difference is that
+// this function uses the Placeholder field of the prompt, which
+// has a lenght limit (and thus fail on longer confirmation message).
 func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label string, placeholder string) (events.APIGatewayProxyResponse, error) {
 	customID, err := internal.MarshalCustomID(cmd)
 	if err != nil {
