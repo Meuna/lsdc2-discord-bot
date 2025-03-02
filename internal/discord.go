@@ -111,14 +111,16 @@ var __guildsCommands = []*discordgo.ApplicationCommand{
 	},
 }
 
-func CreateGuildsCommands(sess *discordgo.Session, appID string, guildID string) error {
-	for _, cmd := range __guildsCommands {
-		_, err := sess.ApplicationCommandCreate(appID, guildID, cmd)
+func CreateGuildsCommands(sess *discordgo.Session, appID string, guildID string) ([]*discordgo.ApplicationCommand, error) {
+	guildCmd := make([]*discordgo.ApplicationCommand, len(__guildsCommands))
+	var err error
+	for idx, cmd := range __guildsCommands {
+		guildCmd[idx], err = sess.ApplicationCommandCreate(appID, guildID, cmd)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return guildCmd, nil
 }
 
 func DeleteGuildsCommands(sess *discordgo.Session, appID string, guildID string) error {
