@@ -29,6 +29,8 @@ type Event struct {
 	events.CloudWatchEvent
 }
 
+// handleRequest processes incoming SQS and CloudWatch events and
+// routes them to the appropriate handler.
 func handleEvent(ctx context.Context, event Event) error {
 	bot := ctx.Value("bot").(Backend)
 
@@ -56,8 +58,77 @@ type Backend struct {
 	internal.BotEnv
 }
 
+//===== Section: CloudWatch route
+
+// handleCloudWatchEvent handles incoming CloudWatch events and routes
+// them based on the event type.
+func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
+	bot.Logger.Info("received CloudWatch event", zap.String("detailType", event.DetailType))
+
+	switch event.DetailType {
+	case "ECS Task State Change":
+		bot.notifyTaskUpdate(event)
+	default:
+		bot.Logger.Error("event not handled", zap.String("event", event.DetailType))
+	}
+}
+
+// notifyTaskUpdate handles the notification of ECS task state updates
+// and sends appropriate messages based on the task status.
+func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
+	bot.Logger.Debug("received ECS task state")
+
+	task := ecs.Task{}
+	json.Unmarshal(event.Detail, &task)
+
+	// Retrieve server instance details
+	inst := internal.ServerInstance{}
+	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "taskArn", *task.TaskArn, &inst)
+	if err != nil {
+		bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
+		bot.message(inst.ChannelID, "🚫 Notification error")
+		return
+	}
+
+	// Send a message depending on the task status
+	switch internal.GetTaskStatus(&task) {
+	case internal.TaskStarting:
+		bot.message(inst.ChannelID, "📢 Server task state: %s", *task.LastStatus)
+	case internal.TaskRunning:
+		// Get running details: IP
+		ip, err := internal.GetTaskIP(&task)
+		if err != nil {
+			ip = "error retrieving ip"
+		}
+		// Get spec details: ports
+		spec := internal.ServerSpec{}
+		err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+		if err != nil {
+			bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+			bot.message(inst.ChannelID, "🚫 Notification error")
+			return
+		}
+		// Message with everything needed to connect
+		bot.message(inst.ChannelID, "✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
+	case internal.TaskStopping:
+		bot.message(inst.ChannelID, "📢 Server task is going offline")
+	case internal.TaskStopped:
+		bot.message(inst.ChannelID, "📢 Server task went offline")
+		bot.Logger.Debug("notify: flag instance as definitely down", zap.String("channelID", inst.ChannelID))
+		inst.TaskArn = ""
+		if err = internal.DynamodbPutItem(bot.InstanceTable, inst); err != nil {
+			bot.Logger.Error("error in stopServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
+			bot.message(inst.ChannelID, "🚫 Notification error")
+		}
+	}
+}
+
+//===== Section: SQS route
+
+// handleSQSEvent loop though all received SQS events, unmarshall them
+// back into BackendCmd and handle each of them
 func (bot Backend) handleSQSEvent(event events.SQSEvent) {
-	bot.Logger.Info("received SQS event")
+	bot.Logger.Info("received SQS events")
 
 	for _, msg := range event.Records {
 		cmd, err := internal.UnmarshallQueuedCmd(msg)
@@ -73,61 +144,8 @@ func (bot Backend) handleSQSEvent(event events.SQSEvent) {
 	}
 }
 
-func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
-	bot.Logger.Info("received CloudWatch event", zap.String("detailType", event.DetailType))
-
-	switch event.DetailType {
-	case "ECS Task State Change":
-		bot.notifyTaskUpdate(event)
-	default:
-		bot.Logger.Error("event not handled", zap.String("event", event.DetailType))
-	}
-}
-
-//
-//	Bot reply
-//
-
-func (bot Backend) message(channelID string, msg string, fmtarg ...interface{}) {
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		bot.Logger.Error("error in message", zap.String("culprit", "discordgo.New"), zap.Error(err))
-		return
-	}
-
-	_, err = sess.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
-		Content: fmt.Sprintf(msg, fmtarg...),
-	})
-	if err != nil {
-		bot.Logger.Error("error in message", zap.String("culprit", "ChannelMessageSendComplex"), zap.Error(err))
-		return
-	}
-}
-
-func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...interface{}) {
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		bot.Logger.Error("error in followUp", zap.String("culprit", "discordgo.New"), zap.Error(err))
-		return
-	}
-
-	itn := discordgo.Interaction{
-		AppID: cmd.AppID,
-		Token: cmd.Token,
-	}
-	_, err = sess.InteractionResponseEdit(&itn, &discordgo.WebhookEdit{
-		Content: internal.Pointer(fmt.Sprintf(msg, fmtarg...)),
-	})
-	if err != nil {
-		bot.Logger.Error("error in followUp", zap.String("culprit", "InteractionResponseEdit"), zap.Error(err))
-		return
-	}
-}
-
-//
-//	Backend commands
-//
-
+// routeFcn routes the given BackendCmd to the appropriate handler function
+// based on the Api field of the command.
 func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 	bot.Logger.Debug("routing command", zap.Any("cmd", cmd))
 
@@ -158,13 +176,16 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 	}
 }
 
-//	Game registering
+//===== Section: game registering
 
+// registerGame handles the registration of a new game. This function
+// notably creates a security group and persists the spec in DynamoDB.
 func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.RegisterGameArgs)
 	bot.Logger.Debug("received game register request", zap.Any("args", args))
 
-	spec, err := bot._getSpec(cmd, args)
+	// Retrieve ServerSpec from the command
+	spec, err := bot._getSpec(args)
 	if err != nil {
 		bot.Logger.Error("error in registerGame", zap.String("culprit", "_getSpec"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
@@ -179,7 +200,7 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Check existing spec and abort/cleanup if necessary
+	// Check existing spec and abort if user didn't set overwrite=true
 	bot.Logger.Debug("registering game: scan game list", zap.String("gameName", spec.Name))
 	gameList, err := internal.DynamodbScanAttr(bot.SpecTable, "key")
 	if err != nil {
@@ -187,14 +208,15 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-
 	if slices.Contains(gameList, spec.Name) && !args.Overwrite {
 		bot.Logger.Info("game already registered", zap.String("gameName", spec.Name))
 		bot.followUp(cmd, "🚫 Game %s already registered and overwrite=False", spec.Name)
 		return
 	}
 
-	// Security group creation
+	// Create dedicated security group adapted to the spec ports and protocols
+	// There are cases where a security group already exists (overwrite or
+	// previous partial failure), so we first try to delete such group.
 	bot.Logger.Debug("registering game: ensure previous security group deletion", zap.String("gameName", spec.Name))
 	if err = internal.EnsureAndWaitSecurityGroupDeletion(spec.Name, bot.Lsdc2Stack); err != nil {
 		bot.Logger.Error("error in registerGame", zap.String("culprit", "EnsureAndWaitSecurityGroupDeletion"), zap.Error(err))
@@ -220,10 +242,14 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "✅ %s register done !", spec.Name)
 }
 
-func (bot Backend) _getSpec(cmd internal.BackendCmd, args internal.RegisterGameArgs) (spec internal.ServerSpec, err error) {
+// _getSpec returns a ServerSpec based on the incommand command. It
+// handles the 2 cases permited by the frontend:
+//  1. An URL is provided, in which case the spec is fetched there
+//  2. The spec is directly provided from a modal
+func (bot Backend) _getSpec(args internal.RegisterGameArgs) (spec internal.ServerSpec, err error) {
 	var jsonSpec []byte
 
-	// Dispatch spec source
+	// Dispatch spec source: args.SpecUrl / args.Spec
 	if len(args.SpecUrl) > 0 {
 		var resp *http.Response
 
@@ -259,14 +285,17 @@ func (bot Backend) _getSpec(cmd internal.BackendCmd, args internal.RegisterGameA
 	return
 }
 
-//	Game spinup
+//===== Section: game spinup
 
+// spinupServer handles the creation of a new server instance. This function
+// notably creates a dicsord channel with its permissions, an ECS task
+// definition and persists the instance in DynamoDB.
 func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.SpinupArgs)
 	bot.Logger.Debug("received server spinup request", zap.Any("args", args))
 
-	// Get spec
-	spec, err := bot._getSpecAndIncreaseCount(cmd, args)
+	// Retrieve ServerSpec from the db
+	spec, err := bot._getSpecAndIncreaseCount(args)
 	if err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "_getSpecAndIncreaseCount"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
@@ -284,7 +313,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Register ECS task
+	// Register ECS task definition
 	bot.Logger.Debug("spinupServer: register ECS task", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	if spec.EnvMap == nil {
 		spec.EnvMap = map[string]string{}
@@ -292,7 +321,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	spec.EnvMap["LSDC2_BUCKET"] = bot.SaveGameBucket
 	spec.EnvMap["LSDC2_KEY"] = instName
 	for key, value := range args.Env {
-		spec.EnvMap[key] = value
+		spec.EnvMap[key] = value // FIXME: modernise
 	}
 	if err = internal.RegisterTask(taskFamily, spec, bot.Lsdc2Stack); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "RegisterTask"), zap.Error(err))
@@ -300,7 +329,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	// And register instance
+	// And register instance in db
 	bot.Logger.Debug("spinupServer: register instance", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	inst := internal.ServerInstance{
 		GuildID:       args.GuildID,
@@ -319,7 +348,9 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "✅ %s server creation done !", args.GameName)
 }
 
-func (bot Backend) _getSpecAndIncreaseCount(cmd internal.BackendCmd, args internal.SpinupArgs) (spec internal.ServerSpec, err error) {
+// _getSpecAndIncreaseCount retrieves the ServerSpec and increment the
+// spec count, for specific usage of server instance creation.
+func (bot Backend) _getSpecAndIncreaseCount(args internal.SpinupArgs) (spec internal.ServerSpec, err error) {
 	bot.Logger.Debug("spinupServer: get spec", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	if err = internal.DynamodbGetItem(bot.SpecTable, args.GameName, &spec); err != nil {
 		err = fmt.Errorf("DynamodbGetItem / %w", err)
@@ -340,6 +371,8 @@ func (bot Backend) _getSpecAndIncreaseCount(cmd internal.BackendCmd, args intern
 	return
 }
 
+// _createServerChannel creates a server channel with the proper
+// members and command persmissions
 func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.SpinupArgs, instName string) (chanID string, err error) {
 	// Retrieve guild conf
 	bot.Logger.Debug("spinupServer: get guild conf", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
@@ -349,7 +382,7 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 		return
 	}
 
-	// Create chan
+	// Create the channel, including its membership rights
 	sessBot, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
 		err = fmt.Errorf("discordgo.New / %w", err)
@@ -371,7 +404,7 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 		return
 	}
 
-	// Setup permissions
+	// Setup command permissions
 	scope := "applications.commands.permissions.update applications.commands.update"
 	sessBearer, cleanup, err := internal.BearerSession(bot.ClientID, bot.ClientSecret, scope)
 	if err != nil {
@@ -399,12 +432,15 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 	return
 }
 
-//	Game destroy
+//===== Section: game destroy
 
+// destroyServer removes all resources create for a server, except for
+// its S3 savegames. The function abort if the server is running.
 func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.DestroyArgs)
 	bot.Logger.Debug("received server destroy request", zap.Any("args", args))
 
+	// Retrieve ServerInstance from the db
 	bot.Logger.Debug("destroy: get inst", zap.String("channelID", args.ChannelID))
 	inst := internal.ServerInstance{}
 	if err := internal.DynamodbGetItem(bot.InstanceTable, args.ChannelID, &inst); err != nil {
@@ -430,6 +466,7 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 		}
 	}
 
+	// Destroy the server
 	err := bot._destroyServerInstance(inst)
 	if err != nil {
 		bot.Logger.Error("error in destroyServer", zap.String("culprit", "_destroyServerInstance"), zap.Error(err))
@@ -440,13 +477,15 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "✅ Server destruction done !")
 }
 
+// _destroyServerInstance perform the resources removal. This span the
+// Discord channel, the ECS task definition and the entry in DynamoDB
 func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
 		return fmt.Errorf("discordgo.New / %w", err)
 	}
 
-	bot.Logger.Debug("destroy: get guild conf", zap.String("channelID", inst.ChannelID))
+	bot.Logger.Debug("destroy: delete channel", zap.String("channelID", inst.ChannelID))
 	if _, err = sess.ChannelDelete(inst.ChannelID); err != nil {
 		return fmt.Errorf("ChannelDelete / %w", err)
 	}
@@ -464,8 +503,10 @@ func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) error {
 	return nil
 }
 
-//	Welcoming
+//===== Section: welcoming
 
+// welcomeGuild creates all the Discord resources needed to run LSDC2 in
+// a guild, and persist the guild info in DynamodDB.
 func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.WelcomeArgs)
 	bot.Logger.Debug("received welcoming request", zap.Any("args", args))
@@ -484,7 +525,8 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Command registering
+	// Create guild level commands
+	// TODO: retrieve the created command and passes them to bot._setupCommandPermissions
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
 		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "discordgo.New"), zap.Error(err))
@@ -501,23 +543,26 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 	gc := internal.GuildConf{
 		GuildID: args.GuildID,
 	}
-	if err := bot._createRoles(cmd, args, &gc); err != nil {
+	// Create roles
+	if err := bot._createRoles(args, &gc); err != nil {
 		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "_createRoles"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	if err := bot._createChannels(cmd, args, &gc); err != nil {
+	// Create channels including roles permissions
+	if err := bot._createChannels(args, &gc); err != nil {
 		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "_createChannels"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	if err := bot._setupPermissions(cmd, args, gc); err != nil {
+	// Fix channels and roles command permissions
+	if err := bot._setupCommandPermissions(cmd, args, gc); err != nil {
 		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "_setupPermissions"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
-	// Register conf
+	// Persist guild in db
 	bot.Logger.Debug("welcoming: register instance", zap.String("guildID", args.GuildID))
 	if err := internal.DynamodbPutItem(bot.GuildTable, gc); err != nil {
 		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
@@ -527,7 +572,8 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "✅ Welcome complete !")
 }
 
-func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.WelcomeArgs, gc *internal.GuildConf) error {
+// _createRoles creates LSDC2 Admin and LSDC2 User roles for the welcoming guild
+func (bot Backend) _createRoles(args internal.WelcomeArgs, gc *internal.GuildConf) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
 		return fmt.Errorf("discordgo.New / %w", err)
@@ -559,7 +605,9 @@ func (bot Backend) _createRoles(cmd internal.BackendCmd, args internal.WelcomeAr
 	return nil
 }
 
-func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.WelcomeArgs, gc *internal.GuildConf) error {
+// _createChannels creates an LSDC2 channel category, an admin and a welcome
+// channel in the welcoming guild
+func (bot Backend) _createChannels(args internal.WelcomeArgs, gc *internal.GuildConf) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
 		return fmt.Errorf("discordgo.New / %w", err)
@@ -606,7 +654,12 @@ func (bot Backend) _createChannels(cmd internal.BackendCmd, args internal.Welcom
 	return nil
 }
 
-func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.WelcomeArgs, gc internal.GuildConf) error {
+// _setupCommandPermissions add guild commands permissions to the created
+// channels and roles so that:
+//  1. Admin can run admin commands in the admin channel
+//  2. Users can run server start/stop commands (but in no channel
+//     since at this point, no server instance exsist)
+func (bot Backend) _setupCommandPermissions(cmd internal.BackendCmd, args internal.WelcomeArgs, gc internal.GuildConf) error {
 	scope := "applications.commands.permissions.update applications.commands.update"
 	sess, cleanup, err := internal.BearerSession(bot.ClientID, bot.ClientSecret, scope)
 	if err != nil {
@@ -635,8 +688,9 @@ func (bot Backend) _setupPermissions(cmd internal.BackendCmd, args internal.Welc
 	return nil
 }
 
-//  Goodbyeing
+//===== Section: goodbyeing
 
+// goodbyeGuild removes all resources created to welcome a guild
 func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.GoodbyeArgs)
 	bot.Logger.Debug("received goodbye request", zap.Any("args", args))
@@ -671,7 +725,7 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Command unregistering
+	// Guild commands suppressions
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
 		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "discordgo.New"), zap.Error(err))
@@ -685,11 +739,13 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 		return
 	}
 
+	// Channels suppression
 	if err := bot._deleteChannels(args, &gc); err != nil {
 		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "_deleteChannels"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
+	// Roles suppression
 	if err := bot._deleteRoles(args, &gc); err != nil {
 		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "_deleteRoles"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
@@ -706,6 +762,7 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "✅ Goodbye complete !")
 }
 
+// _deleteChannels delete the LSDC2 channel category, admin and welcome channels
 func (bot Backend) _deleteChannels(args internal.GoodbyeArgs, gc *internal.GuildConf) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
@@ -731,6 +788,7 @@ func (bot Backend) _deleteChannels(args internal.GoodbyeArgs, gc *internal.Guild
 	return nil
 }
 
+// _deleteRoles deletes LSDC2 Admin and LSDC2 User roles
 func (bot Backend) _deleteRoles(args internal.GoodbyeArgs, gc *internal.GuildConf) error {
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
@@ -750,10 +808,22 @@ func (bot Backend) _deleteRoles(args internal.GoodbyeArgs, gc *internal.GuildCon
 	return nil
 }
 
-//
-//  Invite/Kick command
-//
+//===== Section: invite/Kick command
 
+// inviteMember performs various tasks related to user invites, depending
+// on the requester/target existing roles and wether the command is run
+// from a server channel:
+//  1. If the requester is an admin, the target will be assigned the LSDC2
+//     User role.
+//  2. If the command is run from a server channel, the target may be added
+//     to the channel if he already is a LSDC2 User.
+//
+// As a result, when run by an admin from a server channel, the target will
+// both be added to the LSDC2 User and to the channel. When run by an LSDC2
+// User from a server channel, the target will only be added to the server
+// channel if he already have the LSDC2 User role.
+//
+// TODO: correclty implement the documented logic
 func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.InviteArgs)
 
@@ -795,19 +865,8 @@ func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Retrieve list of game channel
-	bot.Logger.Debug("Invite: get list of channel",
-		zap.String("guildID", args.GuildID),
-		zap.String("who", target.User.Username),
-		zap.String("by", requester.User.Username),
-	)
-	serverChannelIDs, err := internal.DynamodbScanAttr(bot.InstanceTable, "key")
-	if err != nil {
-		bot.Logger.Error("error in inviteMember", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
-
+	// Add the user to the LSDC2 group
+	// TODO: check if the user is already a LSDC2 Admin/User and improve bot replies.
 	if slices.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
 		bot.Logger.Debug("invite: add member role",
 			zap.String("guildID", args.GuildID),
@@ -820,6 +879,20 @@ func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 		bot.followUp(cmd, "🚫 %s is not an allowed LSDC2 user", target.User.Username)
 		return
 	}
+
+	// Retrieve list of game channels
+	bot.Logger.Debug("Invite: get list of channel",
+		zap.String("guildID", args.GuildID),
+		zap.String("who", target.User.Username),
+		zap.String("by", requester.User.Username),
+	)
+	serverChannelIDs, err := internal.DynamodbScanAttr(bot.InstanceTable, "key")
+	if err != nil {
+		bot.Logger.Error("error in inviteMember", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	// The command was run from a server channel: also add the user to this channel
 	if slices.Contains(serverChannelIDs, args.ChannelID) {
 		bot.Logger.Debug("invite: add member to channel",
 			zap.String("guildID", args.GuildID),
@@ -832,6 +905,12 @@ func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "%s added !", target.User.Username)
 }
 
+// kickMember can only be executed by and admin and remove a user from the
+// LSC2 roles and/or servers depending on where the command is executed:
+//  1. If the command is run from the LSDC2 admin channel, the target is
+//     removed from the LSDC2 User role and all server channels.
+//  2. If the command is run from a server channel, the target is only
+//     removed from the server.
 func (bot Backend) kickMember(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.KickArgs)
 
@@ -874,6 +953,7 @@ func (bot Backend) kickMember(cmd internal.BackendCmd) {
 	}
 
 	// Retrieve list of game channel
+	// TODO: only fetch the channel when needed (full kick)
 	bot.Logger.Debug("kick: get list of channel",
 		zap.String("guildID", args.GuildID),
 		zap.String("who", target.User.Username),
@@ -886,19 +966,25 @@ func (bot Backend) kickMember(cmd internal.BackendCmd) {
 		return
 	}
 
+	// Only continue if the requester is an admin
+	// TODO: ensure the target is not an admin
+	// TODO: change the code into early return for readability
 	if slices.Contains(requester.Roles, gc.AdminRoleID) || args.RequesterIsAdmin {
 		if args.ChannelID == gc.AdminChannelID {
+			// A kick command from the admin channel = kick from all LSDC2 role ...
 			bot.Logger.Debug("kick: remove member role",
 				zap.String("guildID", args.GuildID),
 				zap.String("who", target.User.Username),
 				zap.String("by", requester.User.Username),
 			)
+			// ... and all servers
 			sess.GuildMemberRoleRemove(args.GuildID, args.TargetID, gc.UserRoleID)
 			for _, channelID := range serverChannelIDs {
 				internal.RemoveUserView(sess, channelID, args.TargetID)
 			}
 			bot.message(gc.WelcomeChannelID, ":middle_finger: in for face %s !", target.User.Username)
 		} else {
+			// A kick from a server channel = only removal from the server channel
 			internal.RemoveUserView(sess, args.ChannelID, args.TargetID)
 		}
 	} else {
@@ -909,50 +995,43 @@ func (bot Backend) kickMember(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "%s kicked !", target.User.Username)
 }
 
-//
-//	CloudWatch events
-//
+//===== Section: bot reply helpers
 
-func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
-	bot.Logger.Debug("received ECS task state")
-
-	task := ecs.Task{}
-	json.Unmarshal(event.Detail, &task)
-
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "taskArn", *task.TaskArn, &inst)
+// message sends the specified  message to the specified channel
+func (bot Backend) message(channelID string, msg string, fmtarg ...interface{}) {
+	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
-		bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
-		bot.message(inst.ChannelID, "🚫 Notification error")
+		bot.Logger.Error("error in message", zap.String("culprit", "discordgo.New"), zap.Error(err))
 		return
 	}
 
-	spec := internal.ServerSpec{}
-	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	_, err = sess.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content: fmt.Sprintf(msg, fmtarg...),
+	})
 	if err != nil {
-		bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
-		bot.message(inst.ChannelID, "🚫 Notification error")
+		bot.Logger.Error("error in message", zap.String("culprit", "ChannelMessageSendComplex"), zap.Error(err))
+		return
+	}
+}
+
+// followUp sends the specified message to a previously acknowledged interaction
+// (Discord replace the "bot thinking ..." by the message)
+func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...interface{}) {
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		bot.Logger.Error("error in followUp", zap.String("culprit", "discordgo.New"), zap.Error(err))
 		return
 	}
 
-	switch internal.GetTaskStatus(&task) {
-	case internal.TaskStarting:
-		bot.message(inst.ChannelID, "📢 Server task state: %s", *task.LastStatus)
-	case internal.TaskRunning:
-		ip, err := internal.GetTaskIP(&task)
-		if err != nil {
-			ip = "error retrieving ip"
-		}
-		bot.message(inst.ChannelID, "✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
-	case internal.TaskStopping:
-		bot.message(inst.ChannelID, "📢 Server task is going offline")
-	case internal.TaskStopped:
-		bot.message(inst.ChannelID, "📢 Server task went offline")
-		bot.Logger.Debug("notify: flag instance as definitely down", zap.String("channelID", inst.ChannelID))
-		inst.TaskArn = ""
-		if err = internal.DynamodbPutItem(bot.InstanceTable, inst); err != nil {
-			bot.Logger.Error("error in stopServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
-			bot.message(inst.ChannelID, "🚫 Notification error")
-		}
+	itn := discordgo.Interaction{
+		AppID: cmd.AppID,
+		Token: cmd.Token,
+	}
+	_, err = sess.InteractionResponseEdit(&itn, &discordgo.WebhookEdit{
+		Content: internal.Pointer(fmt.Sprintf(msg, fmtarg...)),
+	})
+	if err != nil {
+		bot.Logger.Error("error in followUp", zap.String("culprit", "InteractionResponseEdit"), zap.Error(err))
+		return
 	}
 }
