@@ -526,7 +526,6 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 	}
 
 	// Create guild level commands
-	// TODO: retrieve the created command and passes them to bot._setupCommandPermissions
 	sess, err := discordgo.New("Bot " + bot.Token)
 	if err != nil {
 		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "discordgo.New"), zap.Error(err))
@@ -534,7 +533,8 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 		return
 	}
 	bot.Logger.Debug("welcoming: register commands", zap.String("guildID", args.GuildID))
-	if err := internal.CreateGuildsCommands(sess, cmd.AppID, args.GuildID); err != nil {
+	guildCmd, err := internal.CreateGuildsCommands(sess, cmd.AppID, args.GuildID)
+	if err != nil {
 		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "CreateGuildsCommands"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -556,7 +556,7 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 		return
 	}
 	// Fix channels and roles command permissions
-	if err := bot._setupCommandPermissions(cmd, args, gc); err != nil {
+	if err := bot._setupCommandPermissions(cmd, args, gc, guildCmd); err != nil {
 		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "_setupPermissions"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -659,7 +659,12 @@ func (bot Backend) _createChannels(args internal.WelcomeArgs, gc *internal.Guild
 //  1. Admin can run admin commands in the admin channel
 //  2. Users can run server start/stop commands (but in no channel
 //     since at this point, no server instance exsist)
-func (bot Backend) _setupCommandPermissions(cmd internal.BackendCmd, args internal.WelcomeArgs, gc internal.GuildConf) error {
+func (bot Backend) _setupCommandPermissions(
+	cmd internal.BackendCmd,
+	args internal.WelcomeArgs,
+	gc internal.GuildConf,
+	guildCmd []*discordgo.ApplicationCommand,
+) error {
 	scope := "applications.commands.permissions.update applications.commands.update"
 	sess, cleanup, err := internal.BearerSession(bot.ClientID, bot.ClientSecret, scope)
 	if err != nil {
@@ -668,13 +673,9 @@ func (bot Backend) _setupCommandPermissions(cmd internal.BackendCmd, args intern
 	defer cleanup()
 
 	bot.Logger.Debug("welcoming: setting commands rights", zap.String("guildID", args.GuildID))
-	registeredCmd, err := sess.ApplicationCommands(cmd.AppID, args.GuildID)
-	if err != nil {
-		return fmt.Errorf("discordgo.ApplicationCommands / %w", err)
-	}
 
-	adminCmd := internal.CommandsWithNameInList(registeredCmd, internal.AdminCmd)
-	userCmd := internal.CommandsWithNameInList(registeredCmd, internal.UserCmd)
+	adminCmd := internal.CommandsWithNameInList(guildCmd, internal.AdminCmd)
+	userCmd := internal.CommandsWithNameInList(guildCmd, internal.UserCmd)
 
 	err = internal.SetupAdminCommands(sess, cmd.AppID, args.GuildID, gc, adminCmd)
 	if err != nil {
