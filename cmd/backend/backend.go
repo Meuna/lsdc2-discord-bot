@@ -11,6 +11,8 @@ import (
 	"github.com/meuna/lsdc2-discord-bot/internal"
 	"go.uber.org/zap"
 
+	"maps"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go/service/ecs"
@@ -320,9 +322,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	}
 	spec.EnvMap["LSDC2_BUCKET"] = bot.SaveGameBucket
 	spec.EnvMap["LSDC2_KEY"] = instName
-	for key, value := range args.Env {
-		spec.EnvMap[key] = value // FIXME: modernise
-	}
+	maps.Copy(spec.EnvMap, args.Env)
 	if err = internal.RegisterTask(taskFamily, spec, bot.Lsdc2Stack); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "RegisterTask"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
