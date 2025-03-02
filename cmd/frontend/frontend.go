@@ -67,7 +67,7 @@ var uploadPage string
 //  4. Generates a presigned S3 PUT URL for uploading the save game.
 //  5. Renders an HTML page with the presigned URL embedded.
 func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
-	serverName, channelID, mac, eol, err := bot._parseQuery(request)
+	channelID, mac, eol, err := bot._parseQuery(request)
 	if err != nil {
 		return internal.Error500(), fmt.Errorf("_parseQuery / %w", err)
 	}
@@ -98,20 +98,16 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 	}
 
 	// Render HTML from go:embed template
-	r := strings.NewReplacer("{{serverName}}", serverName, "{{presignedUrl}}", url)
+	r := strings.NewReplacer("{{serverName}}", inst.Name, "{{presignedUrl}}", url)
 	uploadPageWithPutUrl := r.Replace(uploadPage)
 
 	return internal.Html200(uploadPageWithPutUrl), nil
 }
 
 // _parseQuery extracts the query parameters from the given LambdaFunctionURLRequest
-func (bot Frontend) _parseQuery(request events.LambdaFunctionURLRequest) (serverName string, channelID string, mac []byte, eol int64, err error) {
+func (bot Frontend) _parseQuery(request events.LambdaFunctionURLRequest) (channelID string, mac []byte, eol int64, err error) {
 	missingKeys := []string{}
-	serverName, ok := request.QueryStringParameters["serverName"]
-	if !ok {
-		missingKeys = append(missingKeys, "serverName")
-	}
-	channelID, ok = request.QueryStringParameters["channelID"]
+	channelID, ok := request.QueryStringParameters["channelID"]
 	if !ok {
 		missingKeys = append(missingKeys, "channelID")
 	}
@@ -789,12 +785,14 @@ func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyRe
 		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
-	// TODO: reply with a bot.replyLink instead or add a comment as to why it is not possible
+	// Get the presigned URL
 	url, err := internal.PresignGetS3Object(bot.SaveGameBucket, inst.Name, time.Minute)
 	if err != nil {
 		bot.Logger.Error("error in savegameDownload", zap.String("culprit", "PresignGetS3Object"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
+
+	// We don't use the bot.replyLink approach because S3 presigned URL are too long
 	return bot.reply("Link to %s savegame: [Download](%s)", inst.Name, url)
 }
 
@@ -824,7 +822,6 @@ func (bot Frontend) savegameUpload(channelID string, botDomain string) (events.A
 	values.Add("mac", base64.RawURLEncoding.EncodeToString(mac))
 	values.Add("eol", fmt.Sprint(eol))
 	values.Add("channelID", channelID)
-	values.Add("serverName", inst.Name)
 
 	url := url.URL{
 		Scheme:   "https",
@@ -832,7 +829,8 @@ func (bot Frontend) savegameUpload(channelID string, botDomain string) (events.A
 		Path:     "upload",
 		RawQuery: values.Encode(),
 	}
-	return bot.replyLink(url.String(), "Open upload page", "%s savegame", inst.Name)
+	bot.Logger.Debug("tmptrace", zap.String("url", url.String()))
+	return bot.replyLink(url.String(), fmt.Sprintf("Open %s savegame upload page", inst.Name), "")
 }
 
 // Cache of the choices between lambda calls
@@ -913,11 +911,11 @@ func (bot Frontend) reply(msg string, fmtarg ...interface{}) (events.APIGatewayP
 }
 
 // reply replies the specified link with a link button
-func (bot Frontend) replyLink(url string, label string, msg string, fmtarg ...interface{}) (events.APIGatewayProxyResponse, error) {
+func (bot Frontend) replyLink(url string, label string, msg string) (events.APIGatewayProxyResponse, error) {
 	itnResp := discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: fmt.Sprintf(msg, fmtarg...),
+			Content: msg,
 			Components: []discordgo.MessageComponent{
 				discordgo.ActionsRow{
 					Components: []discordgo.MessageComponent{
