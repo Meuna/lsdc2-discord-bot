@@ -21,13 +21,6 @@ import (
 
 // GetParameter retrieves the value of a parameter from AWS Systems Manager Parameter Store.
 // The parameter is assumed to be encrypted using AWS managed key.
-//
-// Parameters:
-//   - name: The name of the parameter to retrieve.
-//
-// Returns:
-//   - string: The value of the parameter.
-//   - error: An error if the parameter could not be retrieved.
 func GetParameter(name string) (string, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -117,15 +110,8 @@ func QueueMessage(queueUrl string, msg string) error {
 
 //===== Section: DynamoDB
 
-// DynamodbGetItem retrieves an item from a DynamoDB table.
-//
-// Parameters:
-//   - tableName: The name of the DynamoDB table.
-//   - key: The key of the item to retrieve.
-//   - out: A pointer to the variable where the retrieved item will be unmarshaled.
-//
-// Returns:
-//   - error: If any operation fails.
+// DynamodbGetItem retrieves an item from the specified DynamoDB table, at
+// the specified key and unmarshal it into the provided out pointer
 func DynamodbGetItem(tableName string, key string, out any) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -147,14 +133,7 @@ func DynamodbGetItem(tableName string, key string, out any) error {
 	return dynamodbattribute.UnmarshalMap(rawOut.Item, out)
 }
 
-// DynamodbPutItem inserts an item into a specified DynamoDB table.
-//
-// Parameters:
-//   - tableName: The name of the DynamoDB table where the item will be inserted.
-//   - item: The item to be inserted into the table.
-//
-// Returns:
-//   - error: If any operation fails.
+// DynamodbPutItem inserts an item into a specified DynamoDB table
 func DynamodbPutItem(tableName string, item any) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -174,14 +153,8 @@ func DynamodbPutItem(tableName string, item any) error {
 	return err
 }
 
-// DynamodbDeleteItem deletes an item from a DynamoDB table.
-//
-// Parameters:
-//   - tableName: The name of the DynamoDB table from which the item will be deleted.
-//   - key: The key of the item to be deleted.
-//
-// Returns:
-//   - error: If the deletion fails.
+// DynamodbDeleteItem deletes the item at the specified key from the
+// specified DynamoDB table
 func DynamodbDeleteItem(tableName string, key string) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -200,22 +173,13 @@ func DynamodbDeleteItem(tableName string, key string) error {
 	return err
 }
 
-// DynamodbScanDo scans a DynamoDB table and processes each item using the
-// provided function. The function takes a table name and a callback function
-// as parameters. The callback functionis called for each item in the table
-// and should return a boolean indicating whether to continue scanning and
-// an error if any.
+// DynamodbScanDo scans the specified DynamoDB table and processes each
+// item using the provided callback. The callback function is called for
+// each item in the table and should return a boolean indicating whether
+// to continue scanning and an error if any.
 //
-// Type Parameters:
-//   - T: The type of the items in the DynamoDB table.
-//
-// Parameters:
-//   - tableName: The name of the DynamoDB table to scan.
-//   - fn: A callback function that processes each item. It takes a typed item as
-//     input and returns a boolean indicating whether to continue scanning and an error if any.
-//
-// Returns:
-//   - error: If the scan operation or the callback function encounters an error.
+// The error returned is either the one returned from the callback function
+// or the one returned from the ScanPages function.
 func DynamodbScanDo[T any](tableName string, fn func(typedItem T) (bool, error)) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -253,17 +217,9 @@ func DynamodbScanDo[T any](tableName string, fn func(typedItem T) (bool, error))
 	return outerErr
 }
 
-// DynamodbScanFindFirst scans a DynamoDB table and finds the first item that
-// matches the specified key and value.
-//
-// Parameters:
-//   - tableName: The name of the DynamoDB table to scan.
-//   - key: The key to match in the DynamoDB items.
-//   - value: The value to match for the specified key.
-//   - out: A pointer to the variable where the retrieved item will be unmarshaled.
-//
-// Returns:
-//   - error: If the scan or unmarshal operation fails.
+// DynamodbScanFindFirst scans the specified DynamoDB table and finds the
+// first item that matches the specified key and value. The item is
+// unmarshalled into the provided out pointer.
 func DynamodbScanFindFirst(tableName string, key string, value string, out any) (err error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -291,16 +247,8 @@ func DynamodbScanFindFirst(tableName string, key string, value string, out any) 
 	return outerErr
 }
 
-// DynamodbScanAttr scans a DynamoDB table and retrieves a column of values
-// for the specified argument column.
-//
-// Parameters:
-//   - tableName: The name of the DynamoDB table to scan.
-//   - column: The column to retrieve values from.
-//
-// Returns:
-//   - []string: A slice of strings containing the values of the specified attribute key.
-//   - error: If the scan operation fails.
+// DynamodbScanAttr scans the specified DynamoDB table and retrieves a
+// slice of values for the specified specified column
 func DynamodbScanAttr(tableName string, column string) ([]string, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -348,9 +296,6 @@ func ecsTags() []*ecs.Tag {
 //     environment variables, and port mappings.
 //   - stack: The stack configuration containing task role ARN, execution
 //     role ARN, and log group.
-//
-// Returns:
-//   - error: If the task definition registration fails,.
 func RegisterTask(instName string, spec ServerSpec, stack Lsdc2Stack) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -393,13 +338,7 @@ func RegisterTask(instName string, spec ServerSpec, stack Lsdc2Stack) error {
 	return err
 }
 
-// DeregisterTaskFamily deregisters all task definitions within a specified ECS task family.
-//
-// Parameters:
-//   - taskFamily: The name of the ECS task family to deregister.
-//
-// Returns:
-//   - error: If any operation fails.
+// DeregisterTaskFamily deregisters all task definitions within the specified ECS task family
 func DeregisterTaskFamily(taskFamily string) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -428,16 +367,9 @@ func DeregisterTaskFamily(taskFamily string) error {
 }
 
 // StartTask starts an ECS task using the provided server instance and stack configuration.
-// It returns the ARN of the started task or an error if the task could not be started.
 //
-// Parameters:
-//   - inst: ServerInstance containing the security group and task family information.
-//   - stack: Lsdc2Stack containing the cluster and subnet information.
-//
-// Returns:
-//   - string: The ARN of the started task.
-//   - error: If the taks could not be started.
-func StartTask(inst ServerInstance, stack Lsdc2Stack) (string, error) {
+// Returns the ARN of the started task.
+func StartTask(inst ServerInstance, stack Lsdc2Stack) (arn string, err error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}))
@@ -466,23 +398,21 @@ func StartTask(inst ServerInstance, stack Lsdc2Stack) (string, error) {
 	}
 	result, err := svc.RunTask(input)
 	if err != nil {
-		return "", err
+		arn = ""
+		return
 	}
 	if len(result.Tasks) == 0 {
-		return "", errors.New("task creation returned empty results")
+		arn = ""
+		err = errors.New("task creation returned empty results")
+		return
 	}
 
-	return *result.Tasks[0].TaskArn, nil
+	arn = *result.Tasks[0].TaskArn
+	err = nil
+	return
 }
 
-// StopTask stops a running ECS task for a given server instance and stack configuration.
-//
-// Parameters:
-//   - inst: The ServerInstance containing the TaskArn of the task to be stopped.
-//   - stack: The Lsdc2Stack containing the ECS cluster and subnets information.
-//
-// Returns:
-//   - error: If the task could not be stopped.
+// StopTask stops a running ECS task for a given server instance and stack configuration
 func StopTask(inst ServerInstance, stack Lsdc2Stack) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -503,15 +433,10 @@ func StopTask(inst ServerInstance, stack Lsdc2Stack) error {
 	return err
 }
 
-// DescribeTask retrieves the details of a specific ECS task.
+// DescribeTask retrieves the details of the server instance ECS task, using the task ARN
+// persisted in the ServerInstance struct.
 //
-// Parameters:
-//   - inst: The ServerInstance containing the TaskArn of the task to be described.
-//   - stack: The Lsdc2Stack containing the ECS cluster information.
-//
-// Returns:
-//   - *ecs.Task: A pointer to the ECS task details.
-//   - error: If the task description fails.
+// Returns a pointer to the ECS task details.
 func DescribeTask(inst ServerInstance, stack Lsdc2Stack) (*ecs.Task, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -549,20 +474,12 @@ func ec2Tags(resType string) []*ec2.TagSpecification {
 	}
 }
 
-// CreateSecurityGroup creates a new security group in AWS EC2 with the specified
-// server specifications and stack configuration. It sets up the security group
-// with the provided name and description, associates it with the given VPC, and
-// applies the specified ingress rules.
+// CreateSecurityGroup creates a new security group in AWS EC2. The security
+// group is given the name and ingress from the specified ServerSpec. It is
+// attached to the VPD of the LSDC2 stack.
 //
-// Parameters:
-//   - spec: ServerSpec containing the specifications for the server, including
-//     the name and AWS IP permissions.
-//   - stack: Lsdc2Stack containing the stack configuration, including the VPC ID.
-//
-// Returns:
-//   - string: The ID of the created security group.
-//   - error: If any operation failed.
-func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (string, error) {
+// Returns the ID of the created security group.
+func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (groupID string, err error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}))
@@ -576,7 +493,8 @@ func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (string, error) {
 	}
 	resultSg, err := svc.CreateSecurityGroup(inputSg)
 	if err != nil {
-		return "", err
+		groupID = ""
+		return
 	}
 
 	// Create ingress rules
@@ -587,24 +505,20 @@ func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (string, error) {
 	}
 	_, err = svc.AuthorizeSecurityGroupIngress(inputIngress)
 	if err != nil {
-		return "", err
+		groupID = ""
+		return
 	}
 
-	return *resultSg.GroupId, nil
+	groupID = *resultSg.GroupId
+	err = nil
+	return
 }
 
-// EnsureAndWaitSecurityGroupDeletion delete the specified security group,
-// and implement a small wait loop until the DescribeSecurityGroups call
+// EnsureAndWaitSecurityGroupDeletion deletes the specified security group,
+// and implement a small retry/wait loop until the DescribeSecurityGroups call
 // return an empty list.
 //
 // The waiting is hardcoded: it runs 5 times with a 2 second wait between tries.
-//
-// Parameters:
-//   - groupName: The name of the security group to delete.
-//   - stack: The Lsdc2Stack containing the VPC information.
-//
-// Returns:
-//   - error: If any operation fail, or if the wait times out.
 func EnsureAndWaitSecurityGroupDeletion(groupName string, stack Lsdc2Stack) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -652,13 +566,7 @@ func EnsureAndWaitSecurityGroupDeletion(groupName string, stack Lsdc2Stack) erro
 	}
 }
 
-// DeleteSecurityGroup deletes an AWS EC2 security group.
-//
-// Parameters:
-//   - groupID: The ID of the security group to be deleted.
-//
-// Returns:
-//   - error: If the deletion fails.
+// DeleteSecurityGroup deletes the specified AWS EC2 security group
 func DeleteSecurityGroup(groupID string) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -673,14 +581,7 @@ func DeleteSecurityGroup(groupID string) error {
 }
 
 // GetTaskIP retrieves the public IP address of an ECS task's ENI (Elastic
-// Network Interface).
-//
-// Parameters:
-//   - task: A pointer to an ecs.Task object representing the ECS task.
-//
-// Returns:
-//   - string: The public IP address of the task's ENI.
-//   - error: If any operation fail, or if the IP can't be determined.
+// Network Interface)
 func GetTaskIP(task *ecs.Task) (string, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -723,17 +624,9 @@ func GetTaskIP(task *ecs.Task) (string, error) {
 
 //===== Section: S3
 
-// PresignGetS3Object generates a pre-signed URL for downloading an object
-// from an S3 bucket.
-//
-// Parameters:
-//   - bucket: The name of the S3 bucket.
-//   - key: The key of the object in the S3 bucket.
-//   - expire: The duration for which the pre-signed URL will be valid.
-//
-// Returns:
-//   - string: The pre-signed URL.
-//   - error: If the URL could not be generated.
+// PresignGetS3Object generates a pre-signed URL for downloading the object
+// from from the specified key and S3 bucket. The link expires after the
+// specified duration.
 func PresignGetS3Object(bucket string, key string, expire time.Duration) (string, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -753,16 +646,8 @@ func PresignGetS3Object(bucket string, key string, expire time.Duration) (string
 	return url, nil
 }
 
-// PresignPutS3Object generates a pre-signed URL for uploading an object to an S3 bucket.
-//
-// Parameters:
-//   - bucket: The name of the S3 bucket.
-//   - key: The key within the S3 bucket where the object will be stored.
-//   - expire: The duration for which the pre-signed URL will be valid.
-//
-// Returns:
-//   - string: The pre-signed URL.
-//   - error: If the URL could not be generated.
+// PresignPutS3Object generates a pre-signed URL for uploading an object and
+// the specified key and S3 bucket.The link expires after the specified duration.
 func PresignPutS3Object(bucket string, key string, expire time.Duration) (string, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
