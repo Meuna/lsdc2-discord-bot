@@ -324,6 +324,22 @@ func AddUserView(sess *discordgo.Session, channelID string, userID string) error
 	return err
 }
 
+// HasUserView return true if a channels permission inclde the specified user
+func HasUserView(sess *discordgo.Session, channelID string, userID string) (bool, error) {
+	channel, err := sess.Channel(channelID)
+	if err != nil {
+		return false, err
+	}
+	userFound := false
+	for _, perm := range channel.PermissionOverwrites {
+		if perm.ID == userID {
+			userFound = true
+		}
+	}
+
+	return userFound, nil
+}
+
 // RemoveUserView retrieves the permissions of a channel and remove all
 // user defined permission for the specified user
 func RemoveUserView(sess *discordgo.Session, channelID string, userID string) error {
