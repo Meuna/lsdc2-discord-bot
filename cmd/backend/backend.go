@@ -324,7 +324,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	spec.EnvMap["LSDC2_BUCKET"] = bot.SaveGameBucket
 	spec.EnvMap["LSDC2_KEY"] = instName
 	maps.Copy(spec.EnvMap, args.Env)
-	if err = internal.RegisterTask(taskFamily, spec, bot.Lsdc2Stack); err != nil {
+	if err = internal.RegisterTask(bot.AwsRegion, taskFamily, spec, bot.Lsdc2Stack); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "RegisterTask"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return

@@ -291,12 +291,13 @@ func ecsTags() []*ecs.Tag {
 // RegisterTask registers a new ECS task definition with the specified parameters.
 //
 // Parameters:
+//   - region: The AWS region.
 //   - instName: The name of the task definition family.
 //   - spec: The server specification containing CPU, memory, image,
 //     environment variables, and port mappings.
 //   - stack: The stack configuration containing task role ARN, execution
 //     role ARN, and log group.
-func RegisterTask(instName string, spec ServerSpec, stack Lsdc2Stack) error {
+func RegisterTask(region string, instName string, spec ServerSpec, stack Lsdc2Stack) error {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}))
@@ -326,7 +327,7 @@ func RegisterTask(instName string, spec ServerSpec, stack Lsdc2Stack) error {
 					LogDriver: aws.String("awslogs"),
 					Options: map[string]*string{
 						"awslogs-group":         aws.String(stack.LogGroup),
-						"awslogs-region":        aws.String("eu-west-3"), // FIXME: remove hardcoded region
+						"awslogs-region":        aws.String(region),
 						"awslogs-stream-prefix": aws.String("ecs"),
 					},
 				},
