@@ -20,6 +20,7 @@ type DiscordSecrets struct {
 }
 
 type Lsdc2Stack struct {
+	AwsRegion        string   `env:"AWS_REGION"`
 	DiscordParam     string   `env:"DISCORD_PARAM"`
 	QueueUrl         string   `env:"BOT_QUEUE_URL"`
 	Vpc              string   `env:"VPC"`
