@@ -108,6 +108,15 @@ var __guildsCommands = []*discordgo.ApplicationCommand{
 	{
 		Name:        UploadAPI,
 		Description: "Upload a savegame to a server instance (run in instance channel)",
+		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Name:        "multiparts",
+				Description: "For large savegames, improve upload performance. Aim for <100MB parts",
+				MinValue:    Pointer(2.),
+				MaxValue:    20.,
+				Type:        discordgo.ApplicationCommandOptionInteger,
+			},
+		},
 	},
 }
 
