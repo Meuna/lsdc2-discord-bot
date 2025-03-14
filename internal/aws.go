@@ -647,8 +647,8 @@ func PresignGetS3Object(bucket string, key string, expire time.Duration) (string
 	return url, nil
 }
 
-// PresignPutS3Object generates a pre-signed URL for uploading an object and
-// the specified key and S3 bucket.The link expires after the specified duration.
+// PresignPutS3Object generates a pre-signed URL for uploading an object for
+// the specified key and S3 bucket. The link expires after the specified duration.
 func PresignPutS3Object(bucket string, key string, expire time.Duration) (string, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -666,4 +666,50 @@ func PresignPutS3Object(bucket string, key string, expire time.Duration) (string
 		return "", nil
 	}
 	return url, nil
+}
+
+// PresignMultipartUploadS3Object generates a list of pre-signed URL for uploading
+// an object in multiple parts for the specified key and S3 bucket. The last link is
+// the CompletePart request. The links expires after the specified duration.
+func PresignMultipartUploadS3Object(bucket string, key string, parts int, expire time.Duration) ([]string, error) {
+	sess := session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+	svc := s3.New(sess)
+
+	mpReply, err := svc.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String("application/octet-stream"),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	urls := make([]string, parts+1)
+	for idx := range parts {
+		req, _ := svc.UploadPartRequest(&s3.UploadPartInput{
+			Bucket:     aws.String(bucket),
+			Key:        aws.String(key),
+			UploadId:   mpReply.UploadId,
+			PartNumber: aws.Int64(int64(idx + 1)),
+		})
+		url, err := req.Presign(expire)
+		if err != nil {
+			return nil, err
+		}
+		urls[idx] = url
+	}
+	req, _ := svc.CompleteMultipartUploadRequest(&s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String(bucket),
+		Key:      aws.String(key),
+		UploadId: mpReply.UploadId,
+	})
+	completeUrl, err := req.Presign(expire)
+	if err != nil {
+		return nil, err
+	}
+	urls[parts] = completeUrl
+
+	return urls, nil
 }

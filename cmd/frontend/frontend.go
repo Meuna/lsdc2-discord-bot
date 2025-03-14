@@ -67,7 +67,7 @@ var uploadPage string
 //  4. Generates a presigned S3 PUT URL for uploading the save game.
 //  5. Renders an HTML page with the presigned URL embedded.
 func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
-	channelID, mac, eol, err := bot._parseQuery(request)
+	channelID, mac, eol, parts, err := bot._parseQuery(request)
 	if err != nil {
 		return internal.Error500(), fmt.Errorf("_parseQuery / %w", err)
 	}
@@ -92,38 +92,50 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 	}
 
 	// Presign S3 PUT
-	url, err := internal.PresignPutS3Object(bot.SaveGameBucket, inst.Name, time.Minute)
+	urls, err := internal.PresignMultipartUploadS3Object(bot.SaveGameBucket, inst.Name, parts, 5*time.Minute)
 	if err != nil {
 		return internal.Error500(), fmt.Errorf("PresignGetS3Object / %w", err)
 	}
 
 	// Render HTML from go:embed template
-	r := strings.NewReplacer("{{serverName}}", inst.Name, "{{presignedUrl}}", url)
+	urlsJson, err := json.Marshal(urls)
+	if err != nil {
+		return internal.Error500(), err
+	}
+	r := strings.NewReplacer("{{serverName}}", inst.Name, "{{presignedUrls}}", string(urlsJson))
 	uploadPageWithPutUrl := r.Replace(uploadPage)
 
 	return internal.Html200(uploadPageWithPutUrl), nil
 }
 
 // _parseQuery extracts the query parameters from the given LambdaFunctionURLRequest
-func (bot Frontend) _parseQuery(request events.LambdaFunctionURLRequest) (channelID string, mac []byte, eol int64, err error) {
+func (bot Frontend) _parseQuery(request events.LambdaFunctionURLRequest) (channelID string, mac []byte, eol int64, parts int, err error) {
 	missingKeys := []string{}
 	channelID, ok := request.QueryStringParameters["channelID"]
 	if !ok {
 		missingKeys = append(missingKeys, "channelID")
 	}
-	eolStr, ok := request.QueryStringParameters["eol"]
-	if !ok {
-		missingKeys = append(missingKeys, "eol")
-	}
 	macStr, ok := request.QueryStringParameters["mac"]
 	if !ok {
 		missingKeys = append(missingKeys, "mac")
+	}
+	partsStr, ok := request.QueryStringParameters["parts"]
+	if !ok {
+		partsStr = "1"
+	}
+	eolStr, ok := request.QueryStringParameters["eol"]
+	if !ok {
+		missingKeys = append(missingKeys, "eol")
 	}
 	if len(missingKeys) > 0 {
 		err = fmt.Errorf("missing keys: %s", missingKeys)
 		return
 	}
 
+	parts, err = strconv.Atoi(partsStr)
+	if err != nil {
+		return
+	}
 	eol, err = strconv.ParseInt(eolStr, 10, 64)
 	if err != nil {
 		return
@@ -221,7 +233,7 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.Lambd
 	case internal.DownloadAPI:
 		return bot.savegameDownload(itn.ChannelID)
 	case internal.UploadAPI:
-		return bot.savegameUpload(itn.ChannelID, request.RequestContext.DomainName)
+		return bot.savegameUpload(itn, request.RequestContext.DomainName)
 	default:
 		bot.Logger.Error("unknown command", zap.String("cmd", acd.Name))
 		return bot.reply("🚫 I don't understand ¯\\_(ツ)_/¯")
@@ -575,7 +587,7 @@ func (bot Frontend) serverCreationCall(itn discordgo.Interaction) (events.APIGat
 func (bot Frontend) memberInviteCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	requester := itn.Member
-	targetID := acd.Options[0].Value.(string)
+	targetID := acd.Options[0].Value.(string) // FIXME: user .StringValue() method ?
 
 	cmd := internal.BackendCmd{
 		AppID: itn.AppID,
@@ -600,7 +612,7 @@ func (bot Frontend) memberInviteCall(itn discordgo.Interaction) (events.APIGatew
 func (bot Frontend) memberKickCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	requester := itn.Member
-	targetID := acd.Options[0].Value.(string)
+	targetID := acd.Options[0].Value.(string) // FIXME: user .StringValue() method ?
 
 	cmd := internal.BackendCmd{
 		AppID: itn.AppID,
@@ -796,14 +808,20 @@ func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyRe
 	return bot.reply("Link to %s savegame: [Download](%s)", inst.Name, url)
 }
 
-// savegameUpload creates a link protectec with a MAC and TTL, to the "upload"
+// savegameUpload creates a link protected with a MAC and TTL, to the "upload"
 // route of the bot frontend address. When clicked, the user leaves Discord
 // to meet the bot in a web browser (see uploadRoute), with a web page to
 // upload a savegame file.
-func (bot Frontend) savegameUpload(channelID string, botDomain string) (events.APIGatewayProxyResponse, error) {
+func (bot Frontend) savegameUpload(itn discordgo.Interaction, botDomain string) (events.APIGatewayProxyResponse, error) {
+	acd := itn.ApplicationCommandData()
+	parts := 1
+	if len(acd.Options) > 0 {
+		parts = int(acd.Options[0].IntValue())
+	}
+
 	// Check that we are in a server channel
 	inst := internal.ServerInstance{}
-	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	err := internal.DynamodbGetItem(bot.InstanceTable, itn.ChannelID, &inst)
 	if err != nil {
 		bot.Logger.Error("error in savegameUpload", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -814,14 +832,15 @@ func (bot Frontend) savegameUpload(channelID string, botDomain string) (events.A
 
 	// Generate a signed url back to the bot
 	key := []byte(bot.ClientSecret)
-	msg := []byte(channelID)
+	msg := []byte(itn.ChannelID)
 	ttl := 30
 	mac, eol := internal.GenMacWithTTL(key, msg, ttl)
 
 	values := url.Values{}
 	values.Add("mac", base64.RawURLEncoding.EncodeToString(mac))
 	values.Add("eol", fmt.Sprint(eol))
-	values.Add("channelID", channelID)
+	values.Add("channelID", itn.ChannelID)
+	values.Add("parts", fmt.Sprint(parts))
 
 	url := url.URL{
 		Scheme:   "https",
@@ -829,7 +848,6 @@ func (bot Frontend) savegameUpload(channelID string, botDomain string) (events.A
 		Path:     "upload",
 		RawQuery: values.Encode(),
 	}
-	bot.Logger.Debug("tmptrace", zap.String("url", url.String()))
 	return bot.replyLink(url.String(), fmt.Sprintf("Open %s savegame upload page", inst.Name), "")
 }
 

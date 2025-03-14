@@ -86,6 +86,15 @@
             -o-animation: kf_shake 0.4s 1 linear;
         }
 
+        .shrink {
+            animation: kf_shrink 0.5s forwards;
+        }
+
+        #uploading-msg::after {
+            content: "";
+            animation: kf_upload_ellipsis 1s steps(4, end) infinite;
+        }
+
         @keyframes kf_shake {
             0% {
                 transform: translate(30px);
@@ -189,6 +198,69 @@
                 -o-origin-transform: translate(0px);
             }
         }
+
+        @keyframes kf_shrink {
+            from {
+                transform: scale(1);
+                opacity: 1;
+            }
+            to {
+                transform: scale(0);
+                opacity: 0;
+            }
+        }
+
+        @-webkit-keyframes kf_shrink {
+            from {
+                -webkit-transform: scale(1);
+                opacity: 1;
+            }
+            to {
+                -webkit-transform: scale(0);
+                opacity: 0;
+            }
+        }
+
+        @-moz-keyframes kf_shrink {
+            from {
+                -moz-transform: scale(1);
+                opacity: 1;
+            }
+            to {
+                -moz-transform: scale(0);
+                opacity: 0;
+            }
+        }
+
+        @-o-keyframes kf_shrink {
+            from {
+                -o-transform: scale(1);
+                opacity: 1;
+            }
+            to {
+                -o-transform: scale(0);
+                opacity: 0;
+            }
+        }
+
+        @keyframes kf_upload_ellipsis {
+            0% {
+                content: "";
+            }
+            25% {
+                content: ".";
+            }
+            50% {
+                content: "..";
+            }
+            75% {
+                content: "...";
+            }
+            100% {
+                content: "";
+            }
+        }
+        
     </style>
 </head>
 
@@ -197,105 +269,142 @@
         <h1>LSDC2 savegame uploader !</h1>
         <div class="container">
             <h2>Server name: <i>{{serverName}}</i></h2>
+            <h2 id="uploading-msg" style="display: none;">Uploading</h2>
+            <h2 id="success-msg" style="display: none;"></h2>
+            <h2 id="error-msg" style="display: none; color: tomato;"></h2>
             <div id="drop-area">
                 <input type="file" id="fileElem" onchange="handleFile(this.files[0])">
                 <label class="button" for="fileElem">Select a file</label>
                 <p>Or drop your archived savegame here.</p>
             </div>
-            <h2 id="success-msg" style="display: none;"></h2>
-            <h2 id="error-msg" style="display: none; color: tomato;"></h2>
         </div>
     </div>
     <script>
         // Credits: https://codepen.io/joezimjs/pen/yPWQbd
 
-        let uploadUrl = "{{presignedUrl}}"
-        let dropArea = document.getElementById("drop-area");
-        let successMsg = document.getElementById("success-msg");
-        let errorMsg = document.getElementById("error-msg");
+        const presignedUrls = {{presignedUrls}};
+        const uploadPartUrls = presignedUrls.slice(0, -1);
+        const completeUploadUrls= presignedUrls.slice(-1);
+        const dropArea = document.getElementById("drop-area");
+        const uploadingMsg = document.getElementById("uploading-msg");
+        const successMsg = document.getElementById("success-msg");
+        const errorMsg = document.getElementById("error-msg");
 
         // Feedback functions
+        function showProgress(partnumber, totalParts) {
+            uploadingMsg.textContent = `Uploading part ${partnumber+1}/${totalParts}`;
+            uploadingMsg.style.display = "block";
+            successMsg.style.display = "none";
+            errorMsg.style.display = "none";
+        }
         function showSuccess(msg) {
-            successMsg.textContent = msg
-            successMsg.style.display = "block"
-            errorMsg.style.display = "none"
+            successMsg.textContent = msg;
+            uploadingMsg.style.display = "none";
+            successMsg.style.display = "block";
+            errorMsg.style.display = "none";
         }
         function showError(msg) {
-            errorMsg.textContent = msg
-            errorMsg.style.display = "block"
-            successMsg.style.display = "none"
+            errorMsg.textContent = msg;
+            uploadingMsg.style.display = "none";
+            errorMsg.style.display = "block";
+            successMsg.style.display = "none";
         }
         function dropAreaShake() {
             dropArea.classList.add('shimmyshake');
         }
         ['webkitAnimationEnd', 'oanimationend', 'msAnimationEnd', 'animationend'].forEach(eventName => {
-            dropArea.addEventListener(eventName, e => dropArea.classList.remove('shimmyshake'), false)
+            dropArea.addEventListener(eventName, e => dropArea.classList.remove('shimmyshake'), false);
         });
+        function dropAreaShrink() {
+            dropArea.classList.add('shrink');
+        }
 
         // Prevent default drag behaviors
         ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            dropArea.addEventListener(eventName, preventDefaults, false)
-            document.body.addEventListener(eventName, preventDefaults, false)
+            dropArea.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
         });
         function preventDefaults(e) {
-            e.preventDefault()
-            e.stopPropagation()
+            e.preventDefault();
+            e.stopPropagation();
         }
 
         // Highlight drop area when item is dragged over it
         ['dragenter', 'dragover'].forEach(eventName => {
-            dropArea.addEventListener(eventName, highlight, false)
+            dropArea.addEventListener(eventName, highlight, false);
         });
         ['dragleave', 'drop'].forEach(eventName => {
-            dropArea.addEventListener(eventName, unhighlight, false)
+            dropArea.addEventListener(eventName, unhighlight, false);
         });
         function highlight(e) {
-            dropArea.classList.add('highlight')
+            dropArea.classList.add('highlight');
         }
         function unhighlight(e) {
-            dropArea.classList.remove('highlight')
+            dropArea.classList.remove('highlight');
         }
 
         // Handle dropped files
         dropArea.addEventListener('drop', handleDrop, false)
         function handleDrop(e) {
-            var files = e.dataTransfer.files
+            const files = e.dataTransfer.files;
             if (files.length > 1) {
-                dropAreaShake()
-                showError("Drop only one file")
+                dropAreaShake();
+                showError("Drop only one file");
                 return
             }
+            dropAreaShrink()
             handleFile(files[0])
+                .then(() => showSuccess("Done !"))
+                .catch(err => showError("Something failed :("))
         }
 
-        function handleFile(file) {
-            let reader = new FileReader()
-            let content
-            reader.onload = (e) => {
-                uploadContent(e.target.result)
-            }
-            reader.readAsDataURL(file)
-        }
+        async function handleFile(file) {
+            let offset = 0;
+            const chunkSize = Math.ceil(file.size / uploadPartUrls.length / 1024)*1024;
+            const totalParts = Math.ceil(file.size / chunkSize);
 
-        async function uploadContent(content) {
-            let binary = atob(content.split(',')[1])
-            let array = []
-            for (var i = 0; i < binary.length; i++) {
-                array.push(binary.charCodeAt(i))
-            }
-            let blobData = new Blob([new Uint8Array(array)], { type: 'application/octet-stream' })
-            fetch(uploadUrl, {
-                method: 'PUT',
-                body: blobData
-            }).then(response => {
+            const completedDoc = document.implementation.createDocument("", "CompleteMultipartUpload");
+
+            for (let partnumber = 0; partnumber < totalParts; partnumber++) {
+                showProgress(partnumber, totalParts);
+                const chunk = file.slice(offset, offset + chunkSize);
+                const arrayBuffer = await chunk.arrayBuffer();
+
+                const response = await fetch(uploadPartUrls[partnumber], {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/octet-stream',
+                    },
+                    body: arrayBuffer,
+                });
+
                 if (!response.ok) {
-                    throw Error(response.statusText);
+                    console.error(`Failed to upload part ${partnumber}:`, response.statusText);
+                    throw new Error(`Part ${partnumber}/${totalParts} upload failed: ${response.statusText}`);
                 }
-                showSuccess("Success !")
+
+                const partNode = completedDoc.createElement("Part");
+                const partnumberNode = completedDoc.createElement("PartNumber");
+                const etagNode = completedDoc.createElement("ETag");
+                partnumberNode.textContent = (partnumber + 1).toString();
+                etagNode.textContent = response.headers.get("etag").slice(1,-1);
+                partNode.appendChild(partnumberNode);
+                partNode.appendChild(etagNode);
+                completedDoc.documentElement.appendChild(partNode);
+
+                console.log(`Part ${partnumber} uploaded successfully.`);
+                offset += chunkSize;
             }
-            ).catch(error => {
-                showError("Upload to bucket failed :(")
-            })
+
+            completedBody = '<?xml version="1.0" encoding="UTF-8"?>' + new XMLSerializer().serializeToString(completedDoc);
+            const response = await fetch(completeUploadUrls, {
+                method: 'POST',
+                body: completedBody,
+            });
+            if (!response.ok) {
+                console.error("Failed to complete the multipart upload");
+                throw new Error("Failed to complete the multipart upload");
+            }
         }
     </script>
 </body>
