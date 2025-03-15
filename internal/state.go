@@ -49,6 +49,7 @@ func InitBot() (BotEnv, error) {
 	} else {
 		bot.Logger, _ = zap.NewProduction()
 	}
+	defer bot.Logger.Sync()
 
 	err := env.Parse(&bot.Lsdc2Stack)
 	if err != nil {
