@@ -308,6 +308,7 @@ func RegisterTask(region string, instName string, spec ServerSpec, stack Lsdc2St
 		Family:                  aws.String(instName),
 		Cpu:                     aws.String(spec.Cpu),
 		Memory:                  aws.String(spec.Memory),
+		EphemeralStorage:        &ecs.EphemeralStorage{SizeInGiB: aws.Int64(spec.Storage)},
 		NetworkMode:             aws.String("awsvpc"),
 		TaskRoleArn:             aws.String(stack.TaskRoleArn),
 		ExecutionRoleArn:        aws.String(stack.ExecutionRoleArn),
