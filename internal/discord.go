@@ -393,10 +393,7 @@ func BearerSession(clientID string, clientSecret string, scope string) (sess *di
 			panic(err)
 		}
 	}
-	sess, err = discordgo.New("Bearer " + token)
-	if err != nil {
-		cleanup()
-	}
+	sess, _ = discordgo.New("Bearer " + token)
 
 	return
 }

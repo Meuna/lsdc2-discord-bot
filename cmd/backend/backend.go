@@ -388,11 +388,7 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 	}
 
 	// Create the channel, including its membership rights
-	sessBot, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		err = fmt.Errorf("discordgo.New / %w", err)
-		return
-	}
+	sessBot, _ := discordgo.New("Bot " + bot.Token)
 	bot.Logger.Debug("spinupServer: create channel", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	channel, err := sessBot.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
 		Name:     instName,
@@ -484,11 +480,8 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 
 // _destroyServerInstance perform the resources removal. This span the
 // Discord channel, the ECS task definition and the entry in DynamoDB
-func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) error {
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		return fmt.Errorf("discordgo.New / %w", err)
-	}
+func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) (err error) {
+	sess, _ := discordgo.New("Bot " + bot.Token)
 
 	bot.Logger.Debug("destroy: delete channel", zap.String("channelID", inst.ChannelID))
 	if _, err = sess.ChannelDelete(inst.ChannelID); err != nil {
@@ -531,12 +524,7 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 	}
 
 	// Create guild level commands
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "discordgo.New"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
+	sess, _ := discordgo.New("Bot " + bot.Token)
 	bot.Logger.Debug("welcoming: register commands", zap.String("guildID", args.GuildID))
 	guildCmd, err := internal.CreateGuildsCommands(sess, cmd.AppID, args.GuildID)
 	if err != nil {
@@ -579,10 +567,7 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 
 // _createRoles creates LSDC2 Admin and LSDC2 User roles for the welcoming guild
 func (bot Backend) _createRoles(args internal.WelcomeArgs, gc *internal.GuildConf) error {
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		return fmt.Errorf("discordgo.New / %w", err)
-	}
+	sess, _ := discordgo.New("Bot " + bot.Token)
 
 	bot.Logger.Debug("welcoming: create LSDC2 roles", zap.String("guildID", args.GuildID))
 	adminRole, err := sess.GuildRoleCreate(args.GuildID, &discordgo.RoleParams{
@@ -613,10 +598,7 @@ func (bot Backend) _createRoles(args internal.WelcomeArgs, gc *internal.GuildCon
 // _createChannels creates an LSDC2 channel category, an admin and a welcome
 // channel in the welcoming guild
 func (bot Backend) _createChannels(args internal.WelcomeArgs, gc *internal.GuildConf) error {
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		return fmt.Errorf("discordgo.New / %w", err)
-	}
+	sess, _ := discordgo.New("Bot " + bot.Token)
 
 	bot.Logger.Debug("welcoming: create LSDC2 category", zap.String("guildID", args.GuildID))
 	lsdc2Category, err := sess.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
@@ -732,12 +714,7 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 	}
 
 	// Guild commands suppressions
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "discordgo.New"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
+	sess, _ := discordgo.New("Bot " + bot.Token)
 	bot.Logger.Debug("goodbyeing: command deletion", zap.String("guildID", args.GuildID))
 	if err := internal.DeleteGuildsCommands(sess, cmd.AppID, args.GuildID); err != nil {
 		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "DeleteGuildsCommands"), zap.Error(err))
@@ -769,11 +746,8 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 }
 
 // _deleteChannels delete the LSDC2 channel category, admin and welcome channels
-func (bot Backend) _deleteChannels(args internal.GoodbyeArgs, gc *internal.GuildConf) error {
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		return fmt.Errorf("discordgo.New / %w", err)
-	}
+func (bot Backend) _deleteChannels(args internal.GoodbyeArgs, gc *internal.GuildConf) (err error) {
+	sess, _ := discordgo.New("Bot " + bot.Token)
 
 	bot.Logger.Debug("goodbyeing: LSDC2 category", zap.String("guildID", args.GuildID), zap.String("categoryID", gc.ChannelCategoryID))
 	_, err = sess.ChannelDelete(gc.ChannelCategoryID)
@@ -795,11 +769,8 @@ func (bot Backend) _deleteChannels(args internal.GoodbyeArgs, gc *internal.Guild
 }
 
 // _deleteRoles deletes LSDC2 Admin and LSDC2 User roles
-func (bot Backend) _deleteRoles(args internal.GoodbyeArgs, gc *internal.GuildConf) error {
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		return fmt.Errorf("discordgo.New / %w", err)
-	}
+func (bot Backend) _deleteRoles(args internal.GoodbyeArgs, gc *internal.GuildConf) (err error) {
+	sess, _ := discordgo.New("Bot " + bot.Token)
 
 	bot.Logger.Debug("goodbyeing: deregistering LSDC2 roles", zap.String("guildID", args.GuildID))
 	err = sess.GuildRoleDelete(args.GuildID, gc.AdminRoleID)
@@ -831,12 +802,7 @@ func (bot Backend) _deleteRoles(args internal.GoodbyeArgs, gc *internal.GuildCon
 func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.InviteArgs)
 
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		bot.Logger.Error("error in inviteMember", zap.String("culprit", "discordgo.New"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
+	sess, _ := discordgo.New("Bot " + bot.Token)
 
 	requester, target, gc, err := bot._getRequesterTargetAndGuildData(sess, args.RequesterID, args.TargetID, args.GuildID)
 	if err != nil {
@@ -919,12 +885,7 @@ func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 func (bot Backend) kickMember(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.KickArgs)
 
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		bot.Logger.Error("error in kickMember", zap.String("culprit", "discordgo.New"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
-		return
-	}
+	sess, _ := discordgo.New("Bot " + bot.Token)
 
 	requester, target, gc, err := bot._getRequesterTargetAndGuildData(sess, args.RequesterID, args.TargetID, args.GuildID)
 	if err != nil {
@@ -1055,13 +1016,9 @@ func (bot Backend) _ensureChannelIsAServer(channelID string) error {
 
 // message sends the specified  message to the specified channel
 func (bot Backend) message(channelID string, msg string, fmtarg ...interface{}) {
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		bot.Logger.Error("error in message", zap.String("culprit", "discordgo.New"), zap.Error(err))
-		return
-	}
+	sess, _ := discordgo.New("Bot " + bot.Token)
 
-	_, err = sess.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+	_, err := sess.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
 		Content: fmt.Sprintf(msg, fmtarg...),
 	})
 	if err != nil {
@@ -1073,17 +1030,13 @@ func (bot Backend) message(channelID string, msg string, fmtarg ...interface{}) 
 // followUp sends the specified message to a previously acknowledged interaction
 // (Discord replace the "bot thinking ..." by the message)
 func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...interface{}) {
-	sess, err := discordgo.New("Bot " + bot.Token)
-	if err != nil {
-		bot.Logger.Error("error in followUp", zap.String("culprit", "discordgo.New"), zap.Error(err))
-		return
-	}
+	sess, _ := discordgo.New("Bot " + bot.Token)
 
 	itn := discordgo.Interaction{
 		AppID: cmd.AppID,
 		Token: cmd.Token,
 	}
-	_, err = sess.InteractionResponseEdit(&itn, &discordgo.WebhookEdit{
+	_, err := sess.InteractionResponseEdit(&itn, &discordgo.WebhookEdit{
 		Content: internal.Pointer(fmt.Sprintf(msg, fmtarg...)),
 	})
 	if err != nil {
