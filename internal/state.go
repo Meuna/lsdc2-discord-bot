@@ -203,8 +203,9 @@ type ServerInstance struct {
 	Name          string `json:"name"`
 	SpecName      string `json:"specName"`
 	TaskFamily    string `json:"taskFamily"`
-	SecurityGroup string `json:"securityGroup"`
+	SecurityGroup string `json:"securityGroup"` // FIXME: remove this field, it should always be aligned with the spec and it is not the case if the spec is updated
 	TaskArn       string `json:"taskArn"`
+	ThreadID      string `json:"threadID"`
 }
 
 const (

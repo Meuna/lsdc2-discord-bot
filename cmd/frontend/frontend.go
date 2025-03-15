@@ -676,6 +676,18 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 		}
 	}
 
+	// Start a dedicated thread
+	sess, err := discordgo.New("Bot " + bot.Token)
+	if err != nil {
+		bot.Logger.Error("error in startServer", zap.String("culprit", "discordgo.New"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
+	thread, err := sess.ThreadStart(channelID, "◯ Instance status", discordgo.ChannelTypeGuildPublicThread, 10080)
+	if err != nil {
+		bot.Logger.Error("error in startServer", zap.String("culprit", "ThreadStart"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
+
 	// Start the task
 	taskArn, err := internal.StartTask(inst, bot.Lsdc2Stack)
 	if err != nil {
@@ -683,8 +695,9 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 		return bot.reply("🚫 Internal error")
 	}
 
-	// Register the task ARN in the instance entry
+	// Register the thread ID and task ARN in the instance entry
 	inst.TaskArn = taskArn
+	inst.ThreadID = thread.ID
 	err = internal.DynamodbPutItem(bot.InstanceTable, inst)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
