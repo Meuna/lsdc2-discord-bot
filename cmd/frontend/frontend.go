@@ -218,6 +218,8 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.Lambd
 		return bot.guildGoodbyeFrontloop(itn)
 	case internal.SpinupAPI:
 		return bot.serverCreationFrontloop(itn)
+	case internal.ConfAPI:
+		return bot.serverConfigurationFrontloop(itn.ChannelID)
 	case internal.DestroyAPI:
 		return bot.serverDestructionFrontloop(itn)
 	case internal.InviteAPI:
@@ -287,6 +289,8 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 		return bot.gameRegisterCall(itn)
 	case internal.SpinupAPI:
 		return bot.serverCreationCall(itn)
+	case internal.ConfAPI:
+		return bot.serverConfigurationCall(itn)
 	default:
 		bot.Logger.Error("unknown command", zap.String("cmd", cmd.Api))
 		return bot.reply("🚫 I don't understand ¯\\_(ツ)_/¯")
@@ -471,12 +475,7 @@ func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.A
 
 	if len(spec.EnvParamMap) > 0 {
 		// The instance requires variables: reply with a modal (frontloop)
-		paramSpec := make(map[string]string, len(spec.EnvParamMap))
-		for env, label := range spec.EnvParamMap {
-			paramSpec[env] = label
-		}
-		title := fmt.Sprintf("Configure %s server", gameName)
-		return bot.modal(cmd, title, paramSpec)
+		return bot._configurationModal(cmd, spec)
 	} else {
 		// Else directly call the backend (skip frontloop)
 		cmd.AppID = itn.AppID
@@ -487,6 +486,53 @@ func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.A
 		}
 		return bot.ackMessage()
 	}
+}
+
+// serverConfigurationFrontloop is the first function triggered by a server conf
+// command. The function fetch the game spec details from DynamoDB table then
+// branches between 2 cases:
+//  1. If the spec requires parameters (as defined by the EnvParamMap field),
+//     the handler reply with a modal to prompt the parameters from the users.
+//  2. Else, skip the frontloop and reply that the server does not require conf.
+func (bot Frontend) serverConfigurationFrontloop(channelID string) (events.APIGatewayProxyResponse, error) {
+	// Get the server instance
+	inst := internal.ServerInstance{}
+	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	if err != nil {
+		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
+
+	// Get the game spec
+	spec := internal.ServerSpec{}
+	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	if err != nil {
+		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
+
+	cmd := internal.BackendCmd{
+		Args: &internal.ConfArgs{
+			ChannelID: channelID,
+		},
+	}
+
+	if len(spec.EnvParamMap) > 0 {
+		// The instance requires variables: reply with a modal (frontloop)
+		return bot._configurationModal(cmd, spec)
+	} else {
+		return bot.reply("⚠️ The server does not have any configuration")
+	}
+}
+
+// TODO: improve the modal to enable advance configration
+func (bot Frontend) _configurationModal(cmd internal.BackendCmd, spec internal.ServerSpec) (events.APIGatewayProxyResponse, error) {
+	paramSpec := make(map[string]string, len(spec.EnvParamMap))
+	for env, label := range spec.EnvParamMap {
+		paramSpec[env] = label
+	}
+	title := fmt.Sprintf("Configure %s server", spec.Name)
+	return bot.modal(cmd, title, paramSpec)
 }
 
 //===== Section: backend call
@@ -578,6 +624,36 @@ func (bot Frontend) serverCreationCall(itn discordgo.Interaction) (events.APIGat
 
 	if err := bot.callBackend(cmd); err != nil {
 		bot.Logger.Error("error in requestServerCreation", zap.String("culprit", "callBackend"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
+	return bot.ackMessage()
+}
+
+// serverConfigurationCall is used as the step 2 of a frontloop, after the step 1
+// replied with a server configuration modal. The function gathers the prompted
+// parameters and call the backend.
+func (bot Frontend) serverConfigurationCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	msd := itn.ModalSubmitData()
+	cmd, err := internal.UnmarshallCustomID(msd.CustomID)
+	if err != nil {
+		bot.Logger.Error("error in serverConfigurationCall", zap.String("culprit", "UnmarshallCustomIDAction"), zap.Error(err))
+		bot.reply("🚫 Internal error")
+	}
+	cmd.AppID = itn.AppID
+	cmd.Token = itn.Token
+
+	args := cmd.Args.(*internal.ConfArgs)
+	args.Env = make(map[string]string, len(msd.Components))
+	for _, item := range msd.Components {
+		textInput := item.(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput)
+		key := textInput.CustomID
+		value := textInput.Value
+		args.Env[key] = value
+	}
+	cmd.Args = args
+
+	if err := bot.callBackend(cmd); err != nil {
+		bot.Logger.Error("error in serverConfigurationCall", zap.String("culprit", "callBackend"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
 	return bot.ackMessage()

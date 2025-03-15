@@ -169,6 +169,9 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 	case internal.SpinupAPI:
 		bot.spinupServer(cmd)
 
+	case internal.ConfAPI:
+		bot.confServer(cmd)
+
 	case internal.DestroyAPI:
 		bot.destroyServer(cmd)
 
@@ -431,6 +434,49 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 
 	chanID = channel.ID
 	return
+}
+
+//===== Section: game conf
+
+// confServer handles the configuration of an existing server instance.
+func (bot Backend) confServer(cmd internal.BackendCmd) {
+	// Get the server instance
+	args := *cmd.Args.(*internal.ConfArgs)
+	bot.Logger.Debug("received server conf request", zap.Any("args", args))
+
+	inst := internal.ServerInstance{}
+	err := internal.DynamodbGetItem(bot.InstanceTable, args.ChannelID, &inst)
+	if err != nil {
+		bot.Logger.Error("error in confServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Get the game spec
+	spec := internal.ServerSpec{}
+	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	if err != nil {
+		bot.Logger.Error("error in confServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// ECS task revisions
+	taskFamily := fmt.Sprintf("lsdc2-%s-%s", inst.GuildID, inst.Name)
+	bot.Logger.Debug("confServer: update ECS task", zap.String("guildID", inst.GuildID), zap.String("instance", inst.Name))
+	if spec.EnvMap == nil {
+		spec.EnvMap = map[string]string{}
+	}
+	spec.EnvMap["LSDC2_BUCKET"] = bot.SaveGameBucket
+	spec.EnvMap["LSDC2_KEY"] = inst.SpecName
+	maps.Copy(spec.EnvMap, args.Env)
+	if err = internal.RegisterTask(bot.AwsRegion, taskFamily, spec, bot.Lsdc2Stack); err != nil {
+		bot.Logger.Error("error in confServer", zap.String("culprit", "RegisterTask"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	bot.followUp(cmd, "✅ %s server configuration updated ! (require server restart)", inst.Name)
 }
 
 //===== Section: game destroy

@@ -12,6 +12,7 @@ const (
 	WelcomeAPI      = "welcome-guild"
 	GoodbyeAPI      = "goodbye-guild"
 	SpinupAPI       = "spinup"
+	ConfAPI         = "conf"
 	DestroyAPI      = "destroy"
 	InviteAPI       = "invite"
 	KickAPI         = "kick"
@@ -22,9 +23,10 @@ const (
 	UploadAPI       = "upload"
 )
 
+// TODO: rework the command rights management wrt to the ConfAPI
 var (
 	OwnerCmd      = []string{RegisterGameAPI, WelcomeAPI, GoodbyeAPI}
-	AdminCmd      = []string{SpinupAPI, DestroyAPI, InviteAPI, KickAPI}
+	AdminCmd      = []string{SpinupAPI, DestroyAPI, InviteAPI, KickAPI, ConfAPI}
 	InviteKickCmd = []string{InviteAPI, KickAPI}
 	UserCmd       = []string{StartAPI, StopAPI, StatusAPI, DownloadAPI, UploadAPI}
 )
@@ -73,6 +75,8 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 		cmd.Args = &GoodbyeArgs{}
 	case SpinupAPI:
 		cmd.Args = &SpinupArgs{}
+	case ConfAPI:
+		cmd.Args = &ConfArgs{}
 	case DestroyAPI:
 		cmd.Args = &DestroyArgs{}
 	case InviteAPI:
@@ -101,6 +105,8 @@ func (cmd BackendCmd) MarshalJSON() ([]byte, error) {
 		cmd.Api = GoodbyeAPI
 	case *SpinupArgs, SpinupArgs:
 		cmd.Api = SpinupAPI
+	case *ConfArgs, ConfArgs:
+		cmd.Api = ConfAPI
 	case *DestroyArgs, DestroyArgs:
 		cmd.Api = DestroyAPI
 	case *InviteArgs, InviteArgs:
@@ -132,6 +138,11 @@ type SpinupArgs struct {
 	GameName string
 	GuildID  string
 	Env      map[string]string
+}
+
+type ConfArgs struct {
+	ChannelID string
+	Env       map[string]string
 }
 
 type DestroyArgs struct {
