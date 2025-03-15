@@ -90,6 +90,10 @@ var __guildsCommands = []*discordgo.ApplicationCommand{
 		},
 	},
 	{
+		Name:        ConfAPI,
+		Description: "Change the server configuration (run in instance channel)",
+	},
+	{
 		Name:        StartAPI,
 		Description: "Start a server instance (run in instance channel)",
 	},
