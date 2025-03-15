@@ -74,6 +74,7 @@ type ServerSpec struct {
 	Image         string            `json:"image"`
 	Cpu           string            `json:"cpu"`
 	Memory        string            `json:"memory"`
+	Storage       int64             `json:"storage"`
 	PortMap       map[string]string `json:"portMap"`
 	EnvMap        map[string]string `json:"envMap"`
 	EnvParamMap   map[string]string `json:"EnvParamMap"`
@@ -101,6 +102,29 @@ func (s ServerSpec) MissingField() []string {
 	}
 
 	return missingFields
+}
+
+// Custom JSON unmarshaler for the ServerSpec type.
+func (s *ServerSpec) UnmarshalJSON(data []byte) error {
+	type Alias ServerSpec
+	aux := &struct {
+		Storage *int64 `json:"storage"`
+		*Alias
+	}{
+		Alias: (*Alias)(s),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	if aux.Storage == nil {
+		s.Storage = 21 // Minimal default value for Storage
+	} else {
+		s.Storage = *aux.Storage
+	}
+
+	return nil
 }
 
 // OpenPorts returns a string representation of ServerSpec ports
