@@ -96,7 +96,8 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 	// Send a message depending on the task status
 	switch internal.GetTaskStatus(&task) {
 	case internal.TaskStarting:
-		bot.message(inst.ChannelID, "📢 Server task state: %s", *task.LastStatus)
+		bot.message(inst.ThreadID, "📢 Server task state: %s", *task.LastStatus)
+		bot.renameChannel(inst.ThreadID, "🔵 Instance status")
 	case internal.TaskRunning:
 		// Get running details: IP
 		ip, err := internal.GetTaskIP(&task)
@@ -112,13 +113,16 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 			return
 		}
 		// Message with everything needed to connect
-		bot.message(inst.ChannelID, "✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
+		bot.message(inst.ThreadID, "✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
+		bot.renameChannel(inst.ThreadID, "🟢 Instance status")
 	case internal.TaskStopping:
-		bot.message(inst.ChannelID, "📢 Server task is going offline")
+		bot.message(inst.ThreadID, "📢 Server task is going offline")
+		bot.renameChannel(inst.ThreadID, "🔴 Instance status")
 	case internal.TaskStopped:
-		bot.message(inst.ChannelID, "📢 Server task went offline")
+		bot.deleteChannel(inst.ThreadID)
 		bot.Logger.Debug("notify: flag instance as definitely down", zap.String("channelID", inst.ChannelID))
 		inst.TaskArn = ""
+		inst.ThreadID = ""
 		if err = internal.DynamodbPutItem(bot.InstanceTable, inst); err != nil {
 			bot.Logger.Error("error in stopServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 			bot.message(inst.ChannelID, "🚫 Notification error")
@@ -1086,4 +1090,16 @@ func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...inter
 		bot.Logger.Error("error in followUp", zap.String("culprit", "InteractionResponseEdit"), zap.Error(err))
 		return
 	}
+}
+
+func (bot Backend) renameChannel(channelID string, name string) {
+	sess, _ := discordgo.New("Bot " + bot.Token)
+	sess.ChannelEdit(channelID, &discordgo.ChannelEdit{
+		Name: name,
+	})
+}
+
+func (bot Backend) deleteChannel(channelID string) {
+	sess, _ := discordgo.New("Bot " + bot.Token)
+	sess.ChannelDelete(channelID)
 }
