@@ -596,7 +596,6 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	// Fix channels and roles command permissions
 	if err := bot._setupCommandPermissions(cmd, args, gc, guildCmd); err != nil {
 		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "_setupPermissions"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")

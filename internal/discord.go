@@ -54,6 +54,18 @@ var __guildsCommands = []*discordgo.ApplicationCommand{
 		},
 	},
 	{
+		Name:        ConfAPI,
+		Description: "Change the server configuration",
+		Options: []*discordgo.ApplicationCommandOption{
+			{
+				Name:        "server-channel",
+				Description: "The Discord channel of the server to configure",
+				Required:    true,
+				Type:        discordgo.ApplicationCommandOptionChannel,
+			},
+		},
+	},
+	{
 		Name:        DestroyAPI,
 		Description: "Destroy a server",
 		Options: []*discordgo.ApplicationCommandOption{
@@ -88,10 +100,6 @@ var __guildsCommands = []*discordgo.ApplicationCommand{
 				Type:        discordgo.ApplicationCommandOptionUser,
 			},
 		},
-	},
-	{
-		Name:        ConfAPI,
-		Description: "Change the server configuration (run in instance channel)",
 	},
 	{
 		Name:        StartAPI,
