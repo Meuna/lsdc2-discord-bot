@@ -217,16 +217,13 @@ const (
 
 // GetTaskStatus return a simplified ECS task lifecycle
 // TaskStarting > TaskRunning > TaskStopping > TaskStopped
-// FIXME: this does not capture the case where the task is online with a desired offline
 func GetTaskStatus(task *ecs.Task) int {
 	if (task == nil) || *task.LastStatus == ecs.DesiredStatusStopped {
 		return TaskStopped
-	}
-	if *task.LastStatus == ecs.DesiredStatusRunning {
-		return TaskRunning
-	}
-	if *task.DesiredStatus == ecs.DesiredStatusStopped {
+	} else if *task.DesiredStatus == ecs.DesiredStatusStopped {
 		return TaskStopping
+	} else if *task.LastStatus == ecs.DesiredStatusRunning {
+		return TaskRunning
 	} else {
 		return TaskStarting
 	}
