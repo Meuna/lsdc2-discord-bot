@@ -338,12 +338,11 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	// And register instance in db
 	bot.Logger.Debug("spinupServer: register instance", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	inst := internal.ServerInstance{
-		GuildID:       args.GuildID,
-		Name:          instName,
-		SpecName:      spec.Name,
-		ChannelID:     chanID,
-		TaskFamily:    taskFamily,
-		SecurityGroup: spec.SecurityGroup,
+		GuildID:    args.GuildID,
+		Name:       instName,
+		SpecName:   spec.Name,
+		ChannelID:  chanID,
+		TaskFamily: taskFamily,
 	}
 	if err = internal.DynamodbPutItem(bot.InstanceTable, inst); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))

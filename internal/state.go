@@ -198,14 +198,13 @@ type GuildConf struct {
 }
 
 type ServerInstance struct {
-	ChannelID     string `json:"key"`
-	GuildID       string `json:"guildID"`
-	Name          string `json:"name"`
-	SpecName      string `json:"specName"`
-	TaskFamily    string `json:"taskFamily"`
-	SecurityGroup string `json:"securityGroup"` // FIXME: remove this field, it should always be aligned with the spec and it is not the case if the spec is updated
-	TaskArn       string `json:"taskArn"`
-	ThreadID      string `json:"threadID"`
+	ChannelID  string `json:"key"`
+	GuildID    string `json:"guildID"`
+	Name       string `json:"name"`
+	SpecName   string `json:"specName"`
+	TaskFamily string `json:"taskFamily"`
+	TaskArn    string `json:"taskArn"`
+	ThreadID   string `json:"threadID"`
 }
 
 const (

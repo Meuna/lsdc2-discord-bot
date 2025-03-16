@@ -371,7 +371,7 @@ func DeregisterTaskFamily(taskFamily string) error {
 // StartTask starts an ECS task using the provided server instance and stack configuration.
 //
 // Returns the ARN of the started task.
-func StartTask(inst ServerInstance, stack Lsdc2Stack) (arn string, err error) {
+func StartTask(stack Lsdc2Stack, taskFamily string, securityGroup string) (arn string, err error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}))
@@ -392,11 +392,11 @@ func StartTask(inst ServerInstance, stack Lsdc2Stack) (arn string, err error) {
 		NetworkConfiguration: &ecs.NetworkConfiguration{
 			AwsvpcConfiguration: &ecs.AwsVpcConfiguration{
 				AssignPublicIp: aws.String("ENABLED"),
-				SecurityGroups: []*string{aws.String(inst.SecurityGroup)},
+				SecurityGroups: []*string{aws.String(securityGroup)},
 				Subnets:        subnets,
 			},
 		},
-		TaskDefinition: aws.String(inst.TaskFamily),
+		TaskDefinition: aws.String(taskFamily),
 	}
 	result, err := svc.RunTask(input)
 	if err != nil {
