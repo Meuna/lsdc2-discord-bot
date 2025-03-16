@@ -114,7 +114,7 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 		}
 		// Message with everything needed to connect
 		bot.renameChannel(inst.ThreadID, "🟢 Instance online: %s", ip)
-		bot.message(inst.ThreadID, "✅ Instance online at %s (open ports: %s)", ip, spec.OpenPorts())
+		bot.message(inst.ThreadID, "✅ Instance online ! ```%s```Open ports: %s", ip, spec.OpenPorts())
 	case internal.TaskStopping:
 		bot.message(inst.ThreadID, "📢 Task is going offline: %s)", *task.LastStatus)
 	case internal.TaskStopped:
