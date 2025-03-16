@@ -24,7 +24,6 @@ const (
 	TaskNotifyAPI   = "tasknotify"
 )
 
-// TODO: rework the command rights management wrt to the ConfAPI
 var (
 	OwnerCmd      = []string{RegisterGameAPI, WelcomeAPI, GoodbyeAPI}
 	AdminCmd      = []string{SpinupAPI, DestroyAPI, InviteAPI, KickAPI, ConfAPI}

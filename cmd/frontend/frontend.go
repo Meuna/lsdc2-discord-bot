@@ -166,6 +166,7 @@ func (bot Frontend) discordRoute(request events.LambdaFunctionURLRequest) (event
 	if err := itn.UnmarshalJSON([]byte(request.Body)); err != nil {
 		return internal.Error500(), fmt.Errorf("UnmarshalJSON / %s", err)
 	}
+	bot.Logger.Debug("Discord interaction", zap.Any("interaction", itn))
 
 	switch itn.Type {
 	case discordgo.InteractionPing:
@@ -219,7 +220,7 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.Lambd
 	case internal.SpinupAPI:
 		return bot.serverCreationFrontloop(itn)
 	case internal.ConfAPI:
-		return bot.serverConfigurationFrontloop(itn.ChannelID)
+		return bot.serverConfigurationFrontloop(itn)
 	case internal.DestroyAPI:
 		return bot.serverDestructionFrontloop(itn)
 	case internal.InviteAPI:
@@ -444,7 +445,10 @@ func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.A
 //  1. If the spec requires parameters (as defined by the EnvParamMap field),
 //     the handler reply with a modal to prompt the parameters from the users.
 //  2. Else, skip the frontloop and reply that the server does not require conf.
-func (bot Frontend) serverConfigurationFrontloop(channelID string) (events.APIGatewayProxyResponse, error) {
+func (bot Frontend) serverConfigurationFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	acd := itn.ApplicationCommandData()
+	channelID := acd.Options[0].Value.(string) // We shortcut to the value because discordgo API want to query channel details
+
 	// Get the server instance
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
