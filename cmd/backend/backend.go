@@ -919,7 +919,7 @@ func (bot Backend) inviteMember(cmd internal.BackendCmd) {
 		)
 		internal.AddUserView(sess, args.ChannelID, args.TargetID)
 		bot.followUp(cmd, "🤙 Welcome %s ! This channel controls a server. "+
-			"Run the command /start, wait a few minute a join the server at the "+
+			"Run the command /start, wait a few minute and join the server at the "+
 			"provided IP and ports", target.User.GlobalName)
 	}
 }
