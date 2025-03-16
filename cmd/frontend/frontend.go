@@ -725,15 +725,23 @@ func (bot Frontend) memberKickCall(itn discordgo.Interaction) (events.APIGateway
 //  3. Starts the server task if it is not already running.
 //  4. Updates the server instance with the new task ARN in DynamoDB.
 func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyResponse, error) {
-	// Retrieve server instance details
+	// Get the server instance
 	inst := internal.ServerInstance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
 	if err != nil {
-		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
 	if inst.SpecName == "" {
 		return bot.reply("🚫 Unrecognised server channel")
+	}
+
+	// Get the game spec
+	spec := internal.ServerSpec{}
+	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	if err != nil {
+		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
 	}
 
 	// Check that the task is not yet running
@@ -765,7 +773,7 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	}
 
 	// Start the task
-	taskArn, err := internal.StartTask(inst, bot.Lsdc2Stack)
+	taskArn, err := internal.StartTask(bot.Lsdc2Stack, inst.TaskFamily, spec.SecurityGroup)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "StartTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
