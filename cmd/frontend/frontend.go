@@ -754,7 +754,7 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 
 	// Start a dedicated thread
 	sess, _ := discordgo.New("Bot " + bot.Token)
-	thread, err := sess.ThreadStart(channelID, "◯ Instance status", discordgo.ChannelTypeGuildPublicThread, 10080)
+	thread, err := sess.ThreadStart(channelID, "🔵 Instance is starting ...", discordgo.ChannelTypeGuildPublicThread, 10080)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "ThreadStart"), zap.Error(err))
 		return bot.reply("🚫 Internal error")

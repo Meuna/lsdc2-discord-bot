@@ -97,8 +97,7 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 	// Send a message depending on the task status
 	switch internal.GetTaskStatus(&task) {
 	case internal.TaskStarting:
-		bot.message(inst.ThreadID, "📢 Server task state: %s", *task.LastStatus)
-		bot.renameChannel(inst.ThreadID, "🔵 Instance status")
+		bot.message(inst.ThreadID, "📢 Task state: %s", *task.LastStatus)
 	case internal.TaskRunning:
 		// Get running details: IP
 		ip, err := internal.GetTaskIP(&task)
@@ -114,13 +113,13 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 			return
 		}
 		// Message with everything needed to connect
-		bot.message(inst.ThreadID, "✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
-		bot.renameChannel(inst.ThreadID, "🟢 Instance status")
+		bot.renameChannel(inst.ThreadID, "🟢 Instance online: %s", ip)
+		bot.message(inst.ThreadID, "✅ Instance online at %s (open ports: %s)", ip, spec.OpenPorts())
 	case internal.TaskStopping:
-		bot.message(inst.ThreadID, "📢 Server task is going offline")
-		bot.renameChannel(inst.ThreadID, "🔴 Instance status")
+		bot.message(inst.ThreadID, "📢 Task is going offline: %s)", *task.LastStatus)
 	case internal.TaskStopped:
-		bot.deleteChannel(inst.ThreadID)
+		bot.renameChannel(inst.ThreadID, "🔴 Instance offline")
+		bot.message(inst.ThreadID, "📢 Task is offline")
 		bot.Logger.Debug("notify: flag instance as definitely down", zap.String("channelID", inst.ChannelID))
 		inst.TaskArn = ""
 		inst.ThreadID = ""
@@ -1113,10 +1112,10 @@ func (bot Backend) followUp(cmd internal.BackendCmd, msg string, fmtarg ...inter
 	}
 }
 
-func (bot Backend) renameChannel(channelID string, name string) {
+func (bot Backend) renameChannel(channelID string, name string, fmtarg ...interface{}) {
 	sess, _ := discordgo.New("Bot " + bot.Token)
 	sess.ChannelEdit(channelID, &discordgo.ChannelEdit{
-		Name: name,
+		Name: fmt.Sprintf(name, fmtarg...),
 	})
 }
 
