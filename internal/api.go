@@ -21,6 +21,7 @@ const (
 	StatusAPI       = "status"
 	DownloadAPI     = "download"
 	UploadAPI       = "upload"
+	TaskNotifyAPI   = "tasknotify"
 )
 
 // TODO: rework the command rights management wrt to the ConfAPI
@@ -83,6 +84,8 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 		cmd.Args = &InviteArgs{}
 	case KickAPI:
 		cmd.Args = &KickArgs{}
+	case TaskNotifyAPI:
+		cmd.Args = &TaskNotifyArgs{}
 	default:
 		return fmt.Errorf("unknown command: %s", tmp.Api)
 	}
@@ -113,6 +116,8 @@ func (cmd BackendCmd) MarshalJSON() ([]byte, error) {
 		cmd.Api = InviteAPI
 	case *KickArgs, KickArgs:
 		cmd.Api = KickAPI
+	case *TaskNotifyArgs, TaskNotifyArgs:
+		cmd.Api = TaskNotifyAPI
 	default:
 		return nil, fmt.Errorf("incompatible BackendCmd Args type %T", cmd.Args)
 	}
@@ -163,6 +168,11 @@ type KickArgs struct {
 	RequesterID      string
 	TargetID         string
 	RequesterIsAdmin bool
+}
+
+type TaskNotifyArgs struct {
+	InstanceName string
+	Message      string
 }
 
 // QueueMarshalledCmd marshals a BackendCmd into JSON and sends it to the specified queue URL.

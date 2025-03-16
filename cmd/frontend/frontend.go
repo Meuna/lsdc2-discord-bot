@@ -92,7 +92,7 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 	}
 
 	// Presign S3 PUT
-	urls, err := internal.PresignMultipartUploadS3Object(bot.SaveGameBucket, inst.Name, parts, 5*time.Minute)
+	urls, err := internal.PresignMultipartUploadS3Object(bot.Bucket, inst.Name, parts, 5*time.Minute)
 	if err != nil {
 		return internal.Error500(), fmt.Errorf("PresignGetS3Object / %w", err)
 	}
@@ -883,7 +883,7 @@ func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyRe
 	}
 
 	// Get the presigned URL
-	url, err := internal.PresignGetS3Object(bot.SaveGameBucket, inst.Name, time.Minute)
+	url, err := internal.PresignGetS3Object(bot.Bucket, inst.Name, time.Minute)
 	if err != nil {
 		bot.Logger.Error("error in savegameDownload", zap.String("culprit", "PresignGetS3Object"), zap.Error(err))
 		return bot.reply("🚫 Internal error")

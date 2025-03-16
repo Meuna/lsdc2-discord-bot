@@ -27,7 +27,7 @@ type Lsdc2Stack struct {
 	Subnets          []string `env:"SUBNETS" envSeparator:";"`
 	Cluster          string   `env:"CLUSTER"`
 	LogGroup         string   `env:"LOG_GROUP"`
-	SaveGameBucket   string   `env:"SAVEGAME_BUCKET"`
+	Bucket           string   `env:"SAVEGAME_BUCKET"`
 	SpecTable        string   `env:"SPEC_TABLE"`
 	GuildTable       string   `env:"GUILD_TABLE"`
 	InstanceTable    string   `env:"INSTANCE_TABLE"`
@@ -217,6 +217,7 @@ const (
 
 // GetTaskStatus return a simplified ECS task lifecycle
 // TaskStarting > TaskRunning > TaskStopping > TaskStopped
+// FIXME: this does not capture the case where the task is online with a desired offline
 func GetTaskStatus(task *ecs.Task) int {
 	if (task == nil) || *task.LastStatus == ecs.DesiredStatusStopped {
 		return TaskStopped

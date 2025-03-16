@@ -67,6 +67,7 @@ type Backend struct {
 // them based on the event type.
 func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
 	bot.Logger.Info("received CloudWatch event", zap.String("detailType", event.DetailType))
+	bot.Logger.Debug("CloudWatch event", zap.Any("event", event))
 
 	switch event.DetailType {
 	case "ECS Task State Change":
@@ -136,6 +137,7 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 // back into BackendCmd and handle each of them
 func (bot Backend) handleSQSEvent(event events.SQSEvent) {
 	bot.Logger.Info("received SQS events")
+	bot.Logger.Debug("CloudWatch event", zap.Any("event", event))
 
 	for _, msg := range event.Records {
 		cmd, err := internal.UnmarshallQueuedCmd(msg)
@@ -180,6 +182,9 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 
 	case internal.KickAPI:
 		bot.kickMember(cmd)
+
+	case internal.TaskNotifyAPI:
+		bot.forwardTaskNotification(cmd)
 
 	default:
 		bot.Logger.Error("unrecognized function", zap.String("action", cmd.Api))
@@ -325,14 +330,8 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 
 	// Register ECS task definition
 	bot.Logger.Debug("spinupServer: register ECS task", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
-	if spec.EnvMap == nil {
-		spec.EnvMap = map[string]string{}
-	}
-	spec.EnvMap["LSDC2_BUCKET"] = bot.SaveGameBucket
-	spec.EnvMap["LSDC2_KEY"] = instName
-	maps.Copy(spec.EnvMap, args.Env)
-	if err = internal.RegisterTask(bot.AwsRegion, taskFamily, spec, bot.Lsdc2Stack); err != nil {
-		bot.Logger.Error("error in spinupServer", zap.String("culprit", "RegisterTask"), zap.Error(err))
+	if err = bot._registerTask(taskFamily, instName, spec, args.Env); err != nil {
+		bot.Logger.Error("error in spinupServer", zap.String("culprit", "_registerTask"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -436,6 +435,17 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 	return
 }
 
+func (bot Backend) _registerTask(taskFamily string, instName string, spec internal.ServerSpec, confEnv map[string]string) error {
+	if spec.EnvMap == nil {
+		spec.EnvMap = map[string]string{}
+	}
+	spec.EnvMap["LSDC2_BUCKET"] = bot.Bucket
+	spec.EnvMap["LSDC2_INSTANCE"] = instName
+	spec.EnvMap["LSDC2_QUEUE_URL"] = bot.QueueUrl
+	maps.Copy(spec.EnvMap, confEnv)
+	return internal.RegisterTask(bot.AwsRegion, taskFamily, spec, bot.Lsdc2Stack)
+}
+
 //===== Section: game conf
 
 // confServer handles the configuration of an existing server instance.
@@ -462,15 +472,8 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 	}
 
 	// ECS task revisions
-	taskFamily := fmt.Sprintf("lsdc2-%s-%s", inst.GuildID, inst.Name)
 	bot.Logger.Debug("confServer: update ECS task", zap.String("guildID", inst.GuildID), zap.String("instance", inst.Name))
-	if spec.EnvMap == nil {
-		spec.EnvMap = map[string]string{}
-	}
-	spec.EnvMap["LSDC2_BUCKET"] = bot.SaveGameBucket
-	spec.EnvMap["LSDC2_KEY"] = inst.SpecName
-	maps.Copy(spec.EnvMap, args.Env)
-	if err = internal.RegisterTask(bot.AwsRegion, taskFamily, spec, bot.Lsdc2Stack); err != nil {
+	if err = bot._registerTask(inst.TaskFamily, inst.Name, spec, args.Env); err != nil {
 		bot.Logger.Error("error in confServer", zap.String("culprit", "RegisterTask"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -1056,6 +1059,25 @@ func (bot Backend) _ensureChannelIsAServer(channelID string) error {
 		return errors.New("someone managed to run the invite command in a non-game channel")
 	}
 	return nil
+}
+
+//===== Section: invite/Kick command
+
+// forwardTaskNotification message whatever message the task sent to
+// the discord thread
+func (bot Backend) forwardTaskNotification(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.TaskNotifyArgs)
+
+	// Retrieve server instance details
+	inst := internal.ServerInstance{}
+	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "name", args.InstanceName, &inst)
+	if err != nil {
+		bot.Logger.Error("error in forwardTaskNotification", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
+		bot.message(inst.ChannelID, "🚫 Notification error")
+		return
+	}
+
+	bot.message(inst.ThreadID, "📢 %s", args.Message)
 }
 
 //===== Section: bot reply helpers
