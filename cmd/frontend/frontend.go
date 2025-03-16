@@ -395,56 +395,6 @@ func (bot Frontend) guildGoodbyeFrontloop(itn discordgo.Interaction) (events.API
 	return bot.confirm(cmd, title, confimationText)
 }
 
-// serverDestructionFrontloop is the first function triggered by a server
-// destruction command. The function performs the following steps, then
-// reply with a confirmation modal.
-//  1. The server instances details are fetched from the DynamoDB table
-//  2. A first check ensure that the instance with the provided server name
-//     exists
-//  3. Then a check is made to ensure that the server is not currently running
-//  4. Finally, a confirmation modal is replied
-func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
-	acd := itn.ApplicationCommandData()
-	serverName := acd.Options[0].StringValue()
-
-	// Retrieve the chanel ID
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "name", serverName, &inst)
-	if err != nil {
-		bot.Logger.Error("error in confirmServerDestruction", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-	if inst.ChannelID == "" {
-		return bot.reply("🚫 Server %s not found", serverName)
-	}
-
-	// Check if a task is running
-	if inst.TaskArn != "" {
-		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
-		if err != nil {
-			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
-			return bot.reply("🚫 Internal error")
-		}
-		if task != nil {
-			taskStatus := internal.GetTaskStatus(task)
-			if taskStatus != internal.TaskStopped {
-				return bot.reply("⚠️ The server is running. Please turn it off and try again")
-			}
-		}
-	}
-
-	cmd := internal.BackendCmd{
-		Args: &internal.DestroyArgs{
-			ChannelID: inst.ChannelID,
-		},
-	}
-	title := fmt.Sprintf("Delete %s", serverName)
-	confimationText := fmt.Sprintf(
-		"When you click send, the %s server will be removed from your guild. You will not be able to retrieve savegames anymore.",
-		serverName)
-	return bot.confirm(cmd, title, confimationText)
-}
-
 // serverCreationFrontloop is the first function triggered by a server creation
 // command. The function fetch the game spec details from DynamoDB table then
 // branches between 2 cases:
@@ -523,6 +473,56 @@ func (bot Frontend) serverConfigurationFrontloop(channelID string) (events.APIGa
 	} else {
 		return bot.reply("⚠️ The server does not have any configuration")
 	}
+}
+
+// serverDestructionFrontloop is the first function triggered by a server
+// destruction command. The function performs the following steps, then
+// reply with a confirmation modal.
+//  1. The server instances details are fetched from the DynamoDB table
+//  2. A first check ensure that the instance with the provided server name
+//     exists
+//  3. Then a check is made to ensure that the server is not currently running
+//  4. Finally, a confirmation modal is replied
+func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	acd := itn.ApplicationCommandData()
+	serverName := acd.Options[0].StringValue()
+
+	// Retrieve the chanel ID
+	inst := internal.ServerInstance{}
+	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "name", serverName, &inst)
+	if err != nil {
+		bot.Logger.Error("error in confirmServerDestruction", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
+	if inst.ChannelID == "" {
+		return bot.reply("🚫 Server %s not found", serverName)
+	}
+
+	// Check if a task is running
+	if inst.TaskArn != "" {
+		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
+		if err != nil {
+			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
+			return bot.reply("🚫 Internal error")
+		}
+		if task != nil {
+			taskStatus := internal.GetTaskStatus(task)
+			if taskStatus != internal.TaskStopped {
+				return bot.reply("⚠️ The server is running. Please turn it off and try again")
+			}
+		}
+	}
+
+	cmd := internal.BackendCmd{
+		Args: &internal.DestroyArgs{
+			ChannelID: inst.ChannelID,
+		},
+	}
+	title := fmt.Sprintf("Delete %s", serverName)
+	confimationText := fmt.Sprintf(
+		"When you click send, the %s server will be removed from your guild. You will not be able to retrieve savegames anymore.",
+		serverName)
+	return bot.confirm(cmd, title, confimationText)
 }
 
 // TODO: improve the modal to enable advance configration
