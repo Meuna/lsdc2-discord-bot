@@ -215,17 +215,20 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	}
 
 	// Check existing spec and abort if user didn't set overwrite=true
-	bot.Logger.Debug("registering game: scan game list", zap.String("gameName", spec.Name))
-	gameList, err := internal.DynamodbScanAttr(bot.SpecTable, "key")
-	if err != nil {
-		bot.Logger.Error("error in registerGame", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
+	bot.Logger.Debug("registering game: get previous spec version", zap.String("gameName", spec.Name))
+	previousSpec := internal.ServerSpec{}
+	if err = internal.DynamodbGetItem(bot.SpecTable, spec.Name, &previousSpec); err != nil {
+		bot.Logger.Error("error in registerGame", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	if slices.Contains(gameList, spec.Name) && !args.Overwrite {
-		bot.Logger.Info("game already registered", zap.String("gameName", spec.Name))
-		bot.followUp(cmd, "🚫 Game %s already registered and overwrite=False", spec.Name)
-		return
+	if previousSpec.Name != "" {
+		if !args.Overwrite {
+			bot.Logger.Info("game already registered", zap.String("gameName", spec.Name))
+			bot.followUp(cmd, "🚫 Game %s already registered and overwrite=False", spec.Name)
+			return
+		}
+		spec.ServerCount = previousSpec.ServerCount
 	}
 
 	// Create dedicated security group adapted to the spec ports and protocols
