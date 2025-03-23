@@ -1,20 +1,26 @@
 package internal
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dynamodbTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2Types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecsTypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
-	"github.com/aws/aws-sdk-go/service/ec2"
-	"github.com/aws/aws-sdk-go/service/ecs"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/sqs"
-	"github.com/aws/aws-sdk-go/service/ssm"
+	s3v1 "github.com/aws/aws-sdk-go/service/s3" // FIXME: remove and use SDK v2 when it is able to presign completed multipart upload
 )
 
 //===== Section: SSM
@@ -22,16 +28,16 @@ import (
 // GetParameter retrieves the value of a parameter from AWS Systems Manager Parameter Store.
 // The parameter is assumed to be encrypted using AWS managed key.
 func GetParameter(name string) (string, error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ssm.New(sess)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", err
+	}
+	client := ssm.NewFromConfig(cfg)
 
-	input := &ssm.GetParameterInput{
+	param, err := client.GetParameter(context.TODO(), &ssm.GetParameterInput{
 		Name:           aws.String(name),
 		WithDecryption: aws.Bool(true),
-	}
-	param, err := svc.GetParameter(input)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -94,16 +100,16 @@ func Error500() events.APIGatewayProxyResponse {
 //===== Section: SQS
 
 func QueueMessage(queueUrl string, msg string) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := sqs.New(sess)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return err
+	}
+	client := sqs.NewFromConfig(cfg)
 
-	input := &sqs.SendMessageInput{
+	_, err = client.SendMessage(context.TODO(), &sqs.SendMessageInput{
 		QueueUrl:    aws.String(queueUrl),
 		MessageBody: aws.String(msg),
-	}
-	_, err := svc.SendMessage(input)
+	})
 
 	return err
 }
@@ -113,178 +119,128 @@ func QueueMessage(queueUrl string, msg string) error {
 // DynamodbGetItem retrieves an item from the specified DynamoDB table, at
 // the specified key and unmarshal it into the provided out pointer
 func DynamodbGetItem(tableName string, key string, out any) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := dynamodb.New(sess)
-
-	input := &dynamodb.GetItemInput{
-		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"key": {
-				S: aws.String(key),
-			},
-		},
-	}
-	rawOut, err := svc.GetItem(input)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return err
 	}
-	return dynamodbattribute.UnmarshalMap(rawOut.Item, out)
+	client := dynamodb.NewFromConfig(cfg)
+
+	rawOut, err := client.GetItem(context.TODO(), &dynamodb.GetItemInput{
+		TableName: aws.String(tableName),
+		Key: map[string]dynamodbTypes.AttributeValue{
+			"key": &dynamodbTypes.AttributeValueMemberS{
+				Value: key,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return attributevalue.UnmarshalMap(rawOut.Item, out)
 }
 
 // DynamodbPutItem inserts an item into a specified DynamoDB table
 func DynamodbPutItem(tableName string, item any) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := dynamodb.New(sess)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return err
+	}
+	client := dynamodb.NewFromConfig(cfg)
 
-	av, err := dynamodbattribute.MarshalMap(item)
+	av, err := attributevalue.MarshalMap(item)
 	if err != nil {
 		return err
 	}
 
-	input := &dynamodb.PutItemInput{
+	_, err = client.PutItem(context.TODO(), &dynamodb.PutItemInput{
 		TableName: aws.String(tableName),
 		Item:      av,
-	}
-	_, err = svc.PutItem(input)
+	})
 	return err
 }
 
 // DynamodbDeleteItem deletes the item at the specified key from the
 // specified DynamoDB table
 func DynamodbDeleteItem(tableName string, key string) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := dynamodb.New(sess)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return err
+	}
+	client := dynamodb.NewFromConfig(cfg)
 
-	input := &dynamodb.DeleteItemInput{
+	_, err = client.DeleteItem(context.TODO(), &dynamodb.DeleteItemInput{
 		TableName: aws.String(tableName),
-		Key: map[string]*dynamodb.AttributeValue{
-			"key": {
-				S: aws.String(key),
+		Key: map[string]dynamodbTypes.AttributeValue{
+			"key": &dynamodbTypes.AttributeValueMemberS{
+				Value: key,
 			},
 		},
-	}
-	_, err := svc.DeleteItem(input)
+	})
 	return err
 }
 
-// DynamodbScanDo scans the specified DynamoDB table and processes each
-// item using the provided callback. The callback function is called for
-// each item in the table and should return a boolean indicating whether
-// to continue scanning and an error if any.
-//
-// The error returned is either the one returned from the callback function
-// or the one returned from the ScanPages function.
-func DynamodbScanDo[T any](tableName string, fn func(typedItem T) (bool, error)) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := dynamodb.New(sess)
+// DynamodbScanDo scans the specified DynamoDB table and return a list of unmarshalled items
+func DynamodbScan[T any](tableName string) ([]T, error) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return nil, err
+	}
+	client := dynamodb.NewFromConfig(cfg)
 
-	var innerErr error
-	outerErr := svc.ScanPages(&dynamodb.ScanInput{
+	scanOut, err := client.Scan(context.TODO(), &dynamodb.ScanInput{
 		TableName: aws.String(tableName),
-	}, func(page *dynamodb.ScanOutput, last bool) bool {
-		var keepPaging bool
-		var typedItem T
-		for _, item := range page.Items {
-			innerErr = dynamodbattribute.UnmarshalMap(item, &typedItem)
-			if innerErr != nil {
-				innerErr = fmt.Errorf("ScanPages / UnmarshalMap / %w", innerErr)
-				return false // stop paging
-			}
-			keepPaging, innerErr = fn(typedItem)
-			if innerErr != nil {
-				innerErr = fmt.Errorf("ScanPages / fn / %w", innerErr)
-				return false // stop paging
-			}
-			if !keepPaging {
-				return false // stop paging
-			}
-		}
-
-		return true // keep paging
 	})
-	if innerErr != nil {
-		return innerErr
+	if err != nil {
+		return nil, err
 	}
 
-	return outerErr
+	out := make([]T, len(scanOut.Items))
+	for idx, item := range scanOut.Items {
+		err = attributevalue.UnmarshalMap(item, &out[idx])
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return out, nil
 }
 
 // DynamodbScanFindFirst scans the specified DynamoDB table and finds the
 // first item that matches the specified key and value. The item is
 // unmarshalled into the provided out pointer.
-func DynamodbScanFindFirst(tableName string, key string, value string, out any) (err error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := dynamodb.New(sess)
+func DynamodbScanFindFirst[T any](tableName string, key string, value string) (out T, err error) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return out, err
+	}
+	client := dynamodb.NewFromConfig(cfg)
 
-	var innerErr error
-	outerErr := svc.ScanPages(&dynamodb.ScanInput{
+	paginator := dynamodb.NewScanPaginator(client, &dynamodb.ScanInput{
 		TableName: aws.String(tableName),
-	}, func(page *dynamodb.ScanOutput, last bool) bool {
+	})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(context.TODO())
+		if err != nil {
+			return out, err
+		}
 		for _, item := range page.Items {
 			if val, ok := item[key]; ok {
-				if val.S != nil && *val.S == value {
-					innerErr = dynamodbattribute.UnmarshalMap(item, out)
-					return false // stop paging
+				if s, ok := val.(*dynamodbTypes.AttributeValueMemberS); ok && s.Value == value {
+					err = attributevalue.UnmarshalMap(item, &out)
+					return out, err
 				}
 			}
 		}
-		return true // keep paging
-	})
-	if innerErr != nil {
-		return fmt.Errorf("ScanPages / UnmarshalMap / %w", innerErr)
 	}
-
-	return outerErr
-}
-
-// DynamodbScanAttr scans the specified DynamoDB table and retrieves a
-// slice of values for the specified specified column
-func DynamodbScanAttr(tableName string, column string) ([]string, error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := dynamodb.New(sess)
-
-	out := []string{}
-
-	err := svc.ScanPages(&dynamodb.ScanInput{
-		TableName: aws.String(tableName),
-	}, func(page *dynamodb.ScanOutput, last bool) bool {
-		outPage := make([]string, len(page.Items))
-		for idx, item := range page.Items {
-			if val, ok := item[column]; ok {
-				if val.S != nil {
-					outPage[idx] = *val.S
-				}
-			}
-		}
-		out = append(out, outPage...)
-
-		return true // keep paging
-	})
-
-	return out, err
+	return
 }
 
 //===== Section: ECS
 
 // Default ECS tag value
-func ecsTags() []*ecs.Tag {
-	return []*ecs.Tag{
-		{
-			Key:   aws.String("lsdc2-src"),
-			Value: aws.String("discord"),
-		},
+func ecsTags() []ecsTypes.Tag {
+	return []ecsTypes.Tag{
+		{Key: aws.String("lsdc2-src"), Value: aws.String("discord")},
 	}
 }
 
@@ -298,68 +254,68 @@ func ecsTags() []*ecs.Tag {
 //   - stack: The stack configuration containing task role ARN, execution
 //     role ARN, and log group.
 func RegisterTask(region string, instName string, spec ServerSpec, stack Lsdc2Stack) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ecs.New(sess)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return err
+	}
+	client := ecs.NewFromConfig(cfg)
 
 	input := &ecs.RegisterTaskDefinitionInput{
 		Tags:                    ecsTags(),
 		Family:                  aws.String(instName),
 		Cpu:                     aws.String(spec.Cpu),
 		Memory:                  aws.String(spec.Memory),
-		EphemeralStorage:        &ecs.EphemeralStorage{SizeInGiB: aws.Int64(spec.Storage)},
-		NetworkMode:             aws.String("awsvpc"),
+		EphemeralStorage:        &ecsTypes.EphemeralStorage{SizeInGiB: spec.Storage},
+		NetworkMode:             ecsTypes.NetworkModeAwsvpc,
 		TaskRoleArn:             aws.String(stack.TaskRoleArn),
 		ExecutionRoleArn:        aws.String(stack.ExecutionRoleArn),
-		RequiresCompatibilities: []*string{aws.String("FARGATE")},
-		RuntimePlatform: &ecs.RuntimePlatform{
-			CpuArchitecture:       aws.String("X86_64"),
-			OperatingSystemFamily: aws.String("LINUX"),
+		RequiresCompatibilities: []ecsTypes.Compatibility{ecsTypes.CompatibilityFargate},
+		RuntimePlatform: &ecsTypes.RuntimePlatform{
+			CpuArchitecture:       ecsTypes.CPUArchitectureX8664,
+			OperatingSystemFamily: ecsTypes.OSFamilyLinux,
 		},
-		ContainerDefinitions: []*ecs.ContainerDefinition{
+		ContainerDefinitions: []ecsTypes.ContainerDefinition{
 			{
 				Essential:    aws.Bool(true),
 				Image:        aws.String(spec.Image),
 				Name:         aws.String(spec.Name + "_container"),
 				Environment:  spec.AwsEnvSpec(),
 				PortMappings: spec.AwsPortSpec(),
-				LogConfiguration: &ecs.LogConfiguration{
-					LogDriver: aws.String("awslogs"),
-					Options: map[string]*string{
-						"awslogs-group":         aws.String(stack.LogGroup),
-						"awslogs-region":        aws.String(region),
-						"awslogs-stream-prefix": aws.String("ecs"),
+				LogConfiguration: &ecsTypes.LogConfiguration{
+					LogDriver: ecsTypes.LogDriverAwslogs,
+					Options: map[string]string{
+						"awslogs-group":         stack.LogGroup,
+						"awslogs-region":        region,
+						"awslogs-stream-prefix": "ecs",
 					},
 				},
 			},
 		},
 	}
-	_, err := svc.RegisterTaskDefinition(input)
+	_, err = client.RegisterTaskDefinition(context.TODO(), input)
 
 	return err
 }
 
 // DeregisterTaskFamily deregisters all task definitions within the specified ECS task family
 func DeregisterTaskFamily(taskFamily string) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ecs.New(sess)
-
-	listInput := &ecs.ListTaskDefinitionsInput{
-		FamilyPrefix: aws.String(taskFamily),
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return err
 	}
-	taskList, err := svc.ListTaskDefinitions(listInput)
+	client := ecs.NewFromConfig(cfg)
+
+	taskList, err := client.ListTaskDefinitions(context.TODO(), &ecs.ListTaskDefinitionsInput{
+		FamilyPrefix: aws.String(taskFamily),
+	})
 	if err != nil {
 		return err
 	}
 
 	for _, def := range taskList.TaskDefinitionArns {
-		deregInput := &ecs.DeregisterTaskDefinitionInput{
-			TaskDefinition: def,
-		}
-		_, err := svc.DeregisterTaskDefinition(deregInput)
+		_, err := client.DeregisterTaskDefinition(context.TODO(), &ecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: aws.String(def),
+		})
 		if err != nil {
 			return err
 		}
@@ -372,33 +328,31 @@ func DeregisterTaskFamily(taskFamily string) error {
 //
 // Returns the ARN of the started task.
 func StartTask(stack Lsdc2Stack, taskFamily string, securityGroup string) (arn string, err error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ecs.New(sess)
-
-	subnets := make([]*string, len(stack.Subnets))
-	for idx, sn := range stack.Subnets {
-		subnets[idx] = aws.String(sn)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", err
 	}
+	client := ecs.NewFromConfig(cfg)
 
-	input := &ecs.RunTaskInput{
+	subnets := make([]string, len(stack.Subnets))
+	copy(subnets, stack.Subnets)
+
+	result, err := client.RunTask(context.TODO(), &ecs.RunTaskInput{
 		Tags: ecsTags(),
-		CapacityProviderStrategy: []*ecs.CapacityProviderStrategyItem{
+		CapacityProviderStrategy: []ecsTypes.CapacityProviderStrategyItem{
 			{CapacityProvider: aws.String("FARGATE_SPOT")},
 		},
 		Cluster: aws.String(stack.Cluster),
-		Count:   aws.Int64(1),
-		NetworkConfiguration: &ecs.NetworkConfiguration{
-			AwsvpcConfiguration: &ecs.AwsVpcConfiguration{
-				AssignPublicIp: aws.String("ENABLED"),
-				SecurityGroups: []*string{aws.String(securityGroup)},
+		Count:   aws.Int32(1),
+		NetworkConfiguration: &ecsTypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecsTypes.AwsVpcConfiguration{
+				AssignPublicIp: ecsTypes.AssignPublicIpEnabled,
+				SecurityGroups: []string{securityGroup},
 				Subnets:        subnets,
 			},
 		},
 		TaskDefinition: aws.String(taskFamily),
-	}
-	result, err := svc.RunTask(input)
+	})
 	if err != nil {
 		arn = ""
 		return
@@ -416,21 +370,21 @@ func StartTask(stack Lsdc2Stack, taskFamily string, securityGroup string) (arn s
 
 // StopTask stops a running ECS task for a given server instance and stack configuration
 func StopTask(inst ServerInstance, stack Lsdc2Stack) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ecs.New(sess)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return err
+	}
+	client := ecs.NewFromConfig(cfg)
 
 	subnets := make([]*string, len(stack.Subnets))
 	for idx, sn := range stack.Subnets {
 		subnets[idx] = aws.String(sn)
 	}
 
-	input := &ecs.StopTaskInput{
+	_, err = client.StopTask(context.TODO(), &ecs.StopTaskInput{
 		Cluster: aws.String(stack.Cluster),
 		Task:    aws.String(inst.TaskArn),
-	}
-	_, err := svc.StopTask(input)
+	})
 
 	return err
 }
@@ -439,38 +393,35 @@ func StopTask(inst ServerInstance, stack Lsdc2Stack) error {
 // persisted in the ServerInstance struct.
 //
 // Returns a pointer to the ECS task details.
-func DescribeTask(inst ServerInstance, stack Lsdc2Stack) (*ecs.Task, error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ecs.New(sess)
-
-	inputDt := &ecs.DescribeTasksInput{
-		Cluster: aws.String(stack.Cluster),
-		Tasks:   []*string{aws.String(inst.TaskArn)},
-	}
-	resultDt, err := svc.DescribeTasks(inputDt)
+func DescribeTask(inst ServerInstance, stack Lsdc2Stack) (*ecsTypes.Task, error) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return nil, err
 	}
-	if len(resultDt.Tasks) == 0 {
+	client := ecs.NewFromConfig(cfg)
+
+	result, err := client.DescribeTasks(context.TODO(), &ecs.DescribeTasksInput{
+		Cluster: aws.String(stack.Cluster),
+		Tasks:   []string{inst.TaskArn},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Tasks) == 0 {
 		return nil, nil
 	}
-	return resultDt.Tasks[0], nil
+	return &result.Tasks[0], nil
 }
 
 //===== Section: EC2
 
 // Default EC2 tag value
-func ec2Tags(resType string) []*ec2.TagSpecification {
-	return []*ec2.TagSpecification{
+func ec2Tags(resourceType ec2Types.ResourceType) []ec2Types.TagSpecification {
+	return []ec2Types.TagSpecification{
 		{
-			ResourceType: aws.String(resType),
-			Tags: []*ec2.Tag{
-				{
-					Key:   aws.String("lsdc2-src"),
-					Value: aws.String("discord"),
-				},
+			ResourceType: resourceType,
+			Tags: []ec2Types.Tag{
+				{Key: aws.String("lsdc2-src"), Value: aws.String("discord")},
 			},
 		},
 	}
@@ -482,36 +433,35 @@ func ec2Tags(resType string) []*ec2.TagSpecification {
 //
 // Returns the ID of the created security group.
 func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (groupID string, err error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ec2.New(sess)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", err
+	}
+	client := ec2.NewFromConfig(cfg)
 
-	inputSg := &ec2.CreateSecurityGroupInput{
-		TagSpecifications: ec2Tags("security-group"),
+	result, err := client.CreateSecurityGroup(context.TODO(), &ec2.CreateSecurityGroupInput{
+		TagSpecifications: ec2Tags(ec2Types.ResourceTypeSecurityGroup),
 		GroupName:         aws.String(spec.Name),
 		Description:       aws.String(fmt.Sprintf("Security group for LSDC2 %s", spec.Name)),
 		VpcId:             aws.String(stack.Vpc),
-	}
-	resultSg, err := svc.CreateSecurityGroup(inputSg)
+	})
 	if err != nil {
 		groupID = ""
 		return
 	}
 
 	// Create ingress rules
-	inputIngress := &ec2.AuthorizeSecurityGroupIngressInput{
+	_, err = client.AuthorizeSecurityGroupIngress(context.TODO(), &ec2.AuthorizeSecurityGroupIngressInput{
 		TagSpecifications: ec2Tags("security-group-rule"),
-		GroupId:           resultSg.GroupId,
+		GroupId:           result.GroupId,
 		IpPermissions:     spec.AwsIpPermissionSpec(),
-	}
-	_, err = svc.AuthorizeSecurityGroupIngress(inputIngress)
+	})
 	if err != nil {
 		groupID = ""
 		return
 	}
 
-	groupID = *resultSg.GroupId
+	groupID = *result.GroupId
 	err = nil
 	return
 }
@@ -522,24 +472,19 @@ func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (groupID string, err
 //
 // The waiting is hardcoded: it runs 5 times with a 2 second wait between tries.
 func EnsureAndWaitSecurityGroupDeletion(groupName string, stack Lsdc2Stack) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ec2.New(sess)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return err
+	}
+	client := ec2.NewFromConfig(cfg)
 
 	descInput := &ec2.DescribeSecurityGroupsInput{
-		Filters: []*ec2.Filter{
-			{
-				Name:   aws.String("vpc-id"),
-				Values: []*string{aws.String(stack.Vpc)},
-			},
-			{
-				Name:   aws.String("group-name"),
-				Values: []*string{aws.String(groupName)},
-			},
+		Filters: []ec2Types.Filter{
+			{Name: aws.String("vpc-id"), Values: []string{stack.Vpc}},
+			{Name: aws.String("group-name"), Values: []string{groupName}},
 		},
 	}
-	sg, err := svc.DescribeSecurityGroups(descInput)
+	sg, err := client.DescribeSecurityGroups(context.TODO(), descInput)
 	if err != nil {
 		return err
 	}
@@ -548,7 +493,7 @@ func EnsureAndWaitSecurityGroupDeletion(groupName string, stack Lsdc2Stack) erro
 	}
 
 	// Hacky sleep with hardcoded max tries and duration.
-	// The loop break free if svc.DescribeSecurityGroups
+	// The loop break free if client.DescribeSecurityGroups
 	// return and empty list.
 	maxTries := 5
 	tries := 0
@@ -557,7 +502,7 @@ func EnsureAndWaitSecurityGroupDeletion(groupName string, stack Lsdc2Stack) erro
 			return fmt.Errorf("wait timeout")
 		}
 		time.Sleep(time.Second * 2)
-		sg, err = svc.DescribeSecurityGroups(descInput)
+		sg, err = client.DescribeSecurityGroups(context.TODO(), descInput)
 		if err != nil {
 			return err
 		}
@@ -570,25 +515,26 @@ func EnsureAndWaitSecurityGroupDeletion(groupName string, stack Lsdc2Stack) erro
 
 // DeleteSecurityGroup deletes the specified AWS EC2 security group
 func DeleteSecurityGroup(groupID string) error {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ec2.New(sess)
-
-	input := &ec2.DeleteSecurityGroupInput{
-		GroupId: aws.String(groupID),
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return err
 	}
-	_, err := svc.DeleteSecurityGroup(input)
+	client := ec2.NewFromConfig(cfg)
+
+	_, err = client.DeleteSecurityGroup(context.TODO(), &ec2.DeleteSecurityGroupInput{
+		GroupId: aws.String(groupID),
+	})
 	return err
 }
 
 // GetTaskIP retrieves the public IP address of an ECS task's ENI (Elastic
 // Network Interface)
-func GetTaskIP(task *ecs.Task) (string, error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := ec2.New(sess)
+func GetTaskIP(task *ecsTypes.Task) (string, error) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", err
+	}
+	client := ec2.NewFromConfig(cfg)
 
 	// Get the ENI from the attachments
 	if len(task.Attachments) == 0 {
@@ -597,20 +543,18 @@ func GetTaskIP(task *ecs.Task) (string, error) {
 	if *task.Attachments[0].Status != "ATTACHED" {
 		return "", errors.New("ENI not in ATTACHED state")
 	}
-	var eniID *string
+	var eniID string
 	for _, kv := range task.Attachments[0].Details {
 		if *kv.Name == "networkInterfaceId" {
-			eniID = kv.Value
+			eniID = *kv.Value
+			break
 		}
 	}
 
 	// Then describe IP from ENI
-	inputDni := &ec2.DescribeNetworkInterfacesInput{
-		NetworkInterfaceIds: []*string{
-			eniID,
-		},
-	}
-	resultDni, err := svc.DescribeNetworkInterfaces(inputDni)
+	resultDni, err := client.DescribeNetworkInterfaces(context.TODO(), &ec2.DescribeNetworkInterfacesInput{
+		NetworkInterfaceIds: []string{eniID},
+	})
 	if err != nil {
 		return "", err
 	}
@@ -630,55 +574,69 @@ func GetTaskIP(task *ecs.Task) (string, error) {
 // from from the specified key and S3 bucket. The link expires after the
 // specified duration.
 func PresignGetS3Object(bucket string, key string, expire time.Duration) (string, error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := s3.New(sess)
-
-	input := &s3.GetObjectInput{
-		Bucket:              aws.String(bucket),
-		Key:                 aws.String(key),
-		ResponseContentType: aws.String("application/octet-stream"),
-	}
-	req, _ := svc.GetObjectRequest(input)
-	url, err := req.Presign(expire)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		return "", nil
+		return "", err
 	}
-	return url, nil
+	client := s3.NewFromConfig(cfg)
+
+	presignClient := s3.NewPresignClient(client)
+	req, err := presignClient.PresignGetObject(context.TODO(),
+		&s3.GetObjectInput{
+			Bucket:              aws.String(bucket),
+			Key:                 aws.String(key),
+			ResponseContentType: aws.String("application/octet-stream"),
+		},
+		s3.WithPresignExpires(expire),
+	)
+	if err != nil {
+		return "", err
+	}
+	if req == nil {
+		return "", fmt.Errorf("PresignGetObject returned a nil request")
+	}
+	return req.URL, nil
 }
 
 // PresignPutS3Object generates a pre-signed URL for uploading an object for
 // the specified key and S3 bucket. The link expires after the specified duration.
 func PresignPutS3Object(bucket string, key string, expire time.Duration) (string, error) {
-	sess := session.Must(session.NewSessionWithOptions(session.Options{
-		SharedConfigState: session.SharedConfigEnable,
-	}))
-	svc := s3.New(sess)
-
-	input := &s3.PutObjectInput{
-		Bucket:      aws.String(bucket),
-		Key:         aws.String(key),
-		ContentType: aws.String("application/octet-stream"),
-	}
-	req, _ := svc.PutObjectRequest(input)
-	url, err := req.Presign(expire)
+	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		return "", nil
+		return "", err
 	}
-	return url, nil
+	client := s3.NewFromConfig(cfg)
+
+	presignClient := s3.NewPresignClient(client)
+	req, err := presignClient.PresignPutObject(context.TODO(),
+		&s3.PutObjectInput{
+			Bucket:      aws.String(bucket),
+			Key:         aws.String(key),
+			ContentType: aws.String("application/octet-stream"),
+		},
+		s3.WithPresignExpires(expire),
+	)
+	if err != nil {
+		return "", err
+	}
+	if req == nil {
+		return "", fmt.Errorf("PresignPutObject returned a nil request")
+	}
+	return req.URL, nil
 }
 
 // PresignMultipartUploadS3Object generates a list of pre-signed URL for uploading
 // an object in multiple parts for the specified key and S3 bucket. The last link is
 // the CompletePart request. The links expires after the specified duration.
+//
+// FIXME: use SDK v2 when it is able to presign completed multipart upload
 func PresignMultipartUploadS3Object(bucket string, key string, parts int, expire time.Duration) ([]string, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
 	}))
-	svc := s3.New(sess)
+	client := s3v1.New(sess)
 
-	mpReply, err := svc.CreateMultipartUpload(&s3.CreateMultipartUploadInput{
+	mpReply, err := client.CreateMultipartUpload(&s3v1.CreateMultipartUploadInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(key),
 		ContentType: aws.String("application/octet-stream"),
@@ -689,7 +647,7 @@ func PresignMultipartUploadS3Object(bucket string, key string, parts int, expire
 
 	urls := make([]string, parts+1)
 	for idx := range parts {
-		req, _ := svc.UploadPartRequest(&s3.UploadPartInput{
+		req, _ := client.UploadPartRequest(&s3v1.UploadPartInput{
 			Bucket:     aws.String(bucket),
 			Key:        aws.String(key),
 			UploadId:   mpReply.UploadId,
@@ -701,7 +659,7 @@ func PresignMultipartUploadS3Object(bucket string, key string, parts int, expire
 		}
 		urls[idx] = url
 	}
-	req, _ := svc.CompleteMultipartUploadRequest(&s3.CompleteMultipartUploadInput{
+	req, _ := client.CompleteMultipartUploadRequest(&s3v1.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),
 		Key:      aws.String(key),
 		UploadId: mpReply.UploadId,

@@ -16,7 +16,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	"github.com/aws/aws-sdk-go/service/ecs"
+	ecsType "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -81,13 +81,11 @@ func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
 // and sends appropriate messages based on the task status.
 func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 	bot.Logger.Debug("received ECS task state")
-
-	task := ecs.Task{}
+	task := ecsType.Task{}
 	json.Unmarshal(event.Detail, &task)
 
 	// Retrieve server instance details
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "taskArn", *task.TaskArn, &inst)
+	inst, err := internal.DynamodbScanFindFirst[internal.ServerInstance](bot.InstanceTable, "taskArn", *task.TaskArn)
 	if err != nil {
 		bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		bot.message(inst.ChannelID, "🚫 Notification error")
@@ -748,18 +746,20 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 
 	// Destroying guild games
 	bot.Logger.Debug("goodbyeing: destroying games", zap.String("guildID", args.GuildID))
-	err := internal.DynamodbScanDo(bot.InstanceTable, func(inst internal.ServerInstance) (bool, error) {
-		if inst.GuildID == args.GuildID {
-			if err := bot._destroyServerInstance(inst); err != nil {
-				return false, fmt.Errorf("_destroyServerInstance / %w", err)
-			}
-		}
-		return true, nil // keep paging
-	})
+	allInst, err := internal.DynamodbScan[internal.ServerInstance](bot.InstanceTable)
 	if err != nil {
-		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "DynamodbScanDo"), zap.Error(err))
+		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "DynamodbScan"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
+	}
+	for _, inst := range allInst {
+		if inst.GuildID == args.GuildID {
+			if err := bot._destroyServerInstance(inst); err != nil {
+				bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "_destroyServerInstance"), zap.Error(err))
+				bot.followUp(cmd, "🚫 Internal error")
+				return
+			}
+		}
 	}
 
 	// Guild commands suppressions
@@ -967,14 +967,14 @@ func (bot Backend) kickMember(cmd internal.BackendCmd) {
 
 		// ... and all servers
 		bot.Logger.Debug("kick: get list of channel", zap.String("guildID", args.GuildID))
-		serverChannels, err := internal.DynamodbScanAttr(bot.InstanceTable, "key")
+		allInst, err := internal.DynamodbScan[internal.ServerInstance](bot.InstanceTable)
 		if err != nil {
 			bot.Logger.Error("error in kickMember", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
 			bot.followUp(cmd, "🚫 Internal error")
 			return
 		}
-		for _, chanID := range serverChannels {
-			err = internal.RemoveUserView(sess, chanID, args.TargetID)
+		for _, inst := range allInst {
+			err = internal.RemoveUserView(sess, inst.ChannelID, args.TargetID)
 			if err != nil {
 				bot.Logger.Error("error in kickMember", zap.String("culprit", "RemoveUserView"), zap.Error(err))
 				bot.followUp(cmd, "🚫 Internal error")
@@ -1069,8 +1069,7 @@ func (bot Backend) forwardTaskNotification(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.TaskNotifyArgs)
 
 	// Retrieve server instance details
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "name", args.InstanceName, &inst)
+	inst, err := internal.DynamodbScanFindFirst[internal.ServerInstance](bot.InstanceTable, "name", args.InstanceName)
 	if err != nil {
 		bot.Logger.Error("error in forwardTaskNotification", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		bot.message(inst.ChannelID, "🚫 Notification error")
