@@ -63,7 +63,7 @@ var uploadPage string
 // uploadRoute handles the upload route for the bot. It performs the following steps:
 //  1. Parses the query parameters from the request.
 //  2. Verifies the MAC and TTL to ensure the request is valid.
-//  3. Retrieves the server instance from DynamoDB using the channel ID.
+//  3. Retrieves the server details from DynamoDB using the channel ID.
 //  4. Generates a presigned S3 PUT URL for uploading the save game.
 //  5. Renders an HTML page with the presigned URL embedded.
 func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
@@ -81,18 +81,18 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 		return internal.Error401("401: MAC verification failed"), nil
 	}
 
-	// Retrieve instance
-	inst := internal.ServerInstance{}
-	err = internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	// Retrieve server details
+	srv := internal.Server{}
+	err = internal.DynamodbGetItem(bot.ServerTable, channelID, &srv)
 	if err != nil {
 		return internal.Error500(), fmt.Errorf("DynamodbGetItem / %w", err)
 	}
-	if inst.SpecName == "" {
-		return internal.Error500(), fmt.Errorf("instance %s not found", channelID)
+	if srv.SpecName == "" {
+		return internal.Error500(), fmt.Errorf("server %s not found", channelID)
 	}
 
 	// Presign S3 PUT
-	urls, err := internal.PresignMultipartUploadS3Object(bot.Bucket, inst.Name, parts, 5*time.Minute)
+	urls, err := internal.PresignMultipartUploadS3Object(bot.Bucket, srv.Name, parts, 5*time.Minute)
 	if err != nil {
 		return internal.Error500(), fmt.Errorf("PresignGetS3Object / %w", err)
 	}
@@ -102,7 +102,7 @@ func (bot Frontend) uploadRoute(request events.LambdaFunctionURLRequest) (events
 	if err != nil {
 		return internal.Error500(), err
 	}
-	r := strings.NewReplacer("{{serverName}}", inst.Name, "{{presignedUrls}}", string(urlsJson))
+	r := strings.NewReplacer("{{serverName}}", srv.Name, "{{presignedUrls}}", string(urlsJson))
 	uploadPageWithPutUrl := r.Replace(uploadPage)
 
 	return internal.Html200(uploadPageWithPutUrl), nil
@@ -402,7 +402,7 @@ func (bot Frontend) guildGoodbyeFrontloop(itn discordgo.Interaction) (events.API
 //  1. If the spec requires parameters (as defined by the EnvParamMap field),
 //     the handler reply with a modal to prompt the parameters from the users.
 //  2. Else, skip the frontloop and directly calls the backend service to
-//     create the server instance.
+//     create the server.
 func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	gameName := acd.Options[0].StringValue()
@@ -425,7 +425,7 @@ func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.A
 	}
 
 	if len(spec.EnvParamMap) > 0 {
-		// The instance requires variables: reply with a modal (frontloop)
+		// The server requires variables: reply with a modal (frontloop)
 		return bot._configurationModal(cmd, spec)
 	} else {
 		// Else directly call the backend (skip frontloop)
@@ -449,9 +449,9 @@ func (bot Frontend) serverConfigurationFrontloop(itn discordgo.Interaction) (eve
 	acd := itn.ApplicationCommandData()
 	channelID := acd.Options[0].Value.(string) // We shortcut to the value because discordgo API want to query channel details
 
-	// Get the server instance
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	// Get the server details
+	srv := internal.Server{}
+	err := internal.DynamodbGetItem(bot.ServerTable, channelID, &srv)
 	if err != nil {
 		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -459,7 +459,7 @@ func (bot Frontend) serverConfigurationFrontloop(itn discordgo.Interaction) (eve
 
 	// Get the game spec
 	spec := internal.ServerSpec{}
-	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
 	if err != nil {
 		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -472,7 +472,7 @@ func (bot Frontend) serverConfigurationFrontloop(itn discordgo.Interaction) (eve
 	}
 
 	if len(spec.EnvParamMap) > 0 {
-		// The instance requires variables: reply with a modal (frontloop)
+		// The server requires variables: reply with a modal (frontloop)
 		return bot._configurationModal(cmd, spec)
 	} else {
 		return bot.reply("⚠️ The server does not have any configuration")
@@ -482,9 +482,8 @@ func (bot Frontend) serverConfigurationFrontloop(itn discordgo.Interaction) (eve
 // serverDestructionFrontloop is the first function triggered by a server
 // destruction command. The function performs the following steps, then
 // reply with a confirmation modal.
-//  1. The server instances details are fetched from the DynamoDB table
-//  2. A first check ensure that the instance with the provided server name
-//     exists
+//  1. The server details are fetched from the DynamoDB table
+//  2. A first check ensure that the server with the provided name exists
 //  3. Then a check is made to ensure that the server is not currently running
 //  4. Finally, a confirmation modal is replied
 func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
@@ -492,18 +491,18 @@ func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (event
 	serverName := acd.Options[0].StringValue()
 
 	// Retrieve the chanel ID
-	inst, err := internal.DynamodbScanFindFirst[internal.ServerInstance](bot.InstanceTable, "name", serverName)
+	srv, err := internal.DynamodbScanFindFirst[internal.Server](bot.ServerTable, "name", serverName)
 	if err != nil {
 		bot.Logger.Error("error in confirmServerDestruction", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
-	if inst.ChannelID == "" {
+	if srv.ChannelID == "" {
 		return bot.reply("🚫 Server %s not found", serverName)
 	}
 
 	// Check if a task is running
-	if inst.TaskArn != "" {
-		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
+	if srv.TaskArn != "" {
+		task, err := internal.DescribeTask(srv.TaskArn, bot.Lsdc2Stack)
 		if err != nil {
 			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
 			return bot.reply("🚫 Internal error")
@@ -518,7 +517,7 @@ func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (event
 
 	cmd := internal.BackendCmd{
 		Args: &internal.DestroyArgs{
-			ChannelID: inst.ChannelID,
+			ChannelID: srv.ChannelID,
 		},
 	}
 	title := fmt.Sprintf("Delete %s", serverName)
@@ -718,34 +717,34 @@ func (bot Frontend) memberKickCall(itn discordgo.Interaction) (events.APIGateway
 
 // startServer starts a server for the given channel ID. It performs the
 // following steps:
-//  1. Retrieves the server instance details from DynamoDB.
+//  1. Retrieves the server details from DynamoDB.
 //  2. Verifies that the task is not already running or in the process of
 //     starting/stopping.
 //  3. Starts the server task if it is not already running.
-//  4. Updates the server instance with the new task ARN in DynamoDB.
+//  4. Updates the server with the new task ARN in DynamoDB.
 func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyResponse, error) {
-	// Get the server instance
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	// Retrieve server details
+	srv := internal.Server{}
+	err := internal.DynamodbGetItem(bot.ServerTable, channelID, &srv)
 	if err != nil {
 		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
-	if inst.SpecName == "" {
+	if srv.SpecName == "" {
 		return bot.reply("🚫 Unrecognised server channel")
 	}
 
 	// Get the game spec
 	spec := internal.ServerSpec{}
-	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
 	if err != nil {
 		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
 
 	// Check that the task is not yet running
-	if inst.TaskArn != "" {
-		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
+	if srv.TaskArn != "" {
+		task, err := internal.DescribeTask(srv.TaskArn, bot.Lsdc2Stack)
 		if err != nil {
 			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
 			return bot.reply("🚫 Internal error")
@@ -772,16 +771,16 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	}
 
 	// Start the task
-	taskArn, err := internal.StartTask(bot.Lsdc2Stack, inst.TaskFamily, spec.SecurityGroup)
+	taskArn, err := internal.StartTask(bot.Lsdc2Stack, srv.TaskFamily, spec.SecurityGroup)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "StartTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
 
 	// Register the thread ID and task ARN in the instance entry
-	inst.TaskArn = taskArn
-	inst.ThreadID = thread.ID
-	err = internal.DynamodbPutItem(bot.InstanceTable, inst)
+	srv.TaskArn = taskArn
+	srv.ThreadID = thread.ID
+	err = internal.DynamodbPutItem(bot.ServerTable, srv)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -791,26 +790,26 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 
 // stopServer stops the server for the given channel ID. It performs the
 // following steps:
-//  1. Retrieves the server instance details from DynamoDB.
+//  1. Retrieves the instance details from DynamoDB.
 //  2. Verifies that the task is not already stop.
 //  3. If not, issues the stop request.
 func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse, error) {
-	// Retrieve server instance details
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	// Retrieve instance details
+	srv := internal.Server{}
+	err := internal.DynamodbGetItem(bot.ServerTable, channelID, &srv)
 	if err != nil {
 		bot.Logger.Error("error in stopServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
-	if inst.SpecName == "" {
+	if srv.SpecName == "" {
 		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
 	// Check that the task is not already stopped
-	if inst.TaskArn == "" {
+	if srv.TaskArn == "" {
 		return bot.reply("🟥 Server offline")
 	} else {
-		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
+		task, err := internal.DescribeTask(srv.TaskArn, bot.Lsdc2Stack)
 		if err != nil {
 			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
 			return bot.reply("🚫 Internal error")
@@ -821,8 +820,8 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	}
 
 	// Issue the task stop request
-	bot.Logger.Debug("stoping: stop task", zap.String("channelID", inst.ChannelID))
-	if err = internal.StopTask(inst, bot.Lsdc2Stack); err != nil {
+	bot.Logger.Debug("stoping: stop task", zap.String("channelID", srv.ChannelID))
+	if err = internal.StopTask(srv.TaskArn, bot.Lsdc2Stack); err != nil {
 		bot.Logger.Error("error in stopServer", zap.String("culprit", "StopTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
@@ -832,22 +831,22 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 // serverStatus retrieves the status of the server associated with the
 // given channel ID.
 func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyResponse, error) {
-	// Retrieve server instance details
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	// Retrieve instance details
+	srv := internal.Server{}
+	err := internal.DynamodbGetItem(bot.ServerTable, channelID, &srv)
 	if err != nil {
 		bot.Logger.Error("error in serverStatus", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
-	if inst.SpecName == "" {
+	if srv.SpecName == "" {
 		return bot.reply("⚠️ This should not happen :thinking:. Are you in a server channel ?")
 	}
 
 	// Status: offline
-	if inst.TaskArn == "" {
+	if srv.TaskArn == "" {
 		return bot.reply("🟥 Server offline")
 	}
-	task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
+	task, err := internal.DescribeTask(srv.TaskArn, bot.Lsdc2Stack)
 	if err != nil {
 		bot.Logger.Error("error in serverStatus", zap.String("culprit", "DescribeTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -871,7 +870,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 	}
 
 	spec := internal.ServerSpec{}
-	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
 	if err != nil {
 		bot.Logger.Error("error in serverStatus", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -882,26 +881,26 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 // savegameDownload creates a pre-signed URL for the savegame file stored in
 // S3, for the given channel ID, and replies with the link.
 func (bot Frontend) savegameDownload(channelID string) (events.APIGatewayProxyResponse, error) {
-	// Retrieve server instance details
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	// Retrieve server details
+	srv := internal.Server{}
+	err := internal.DynamodbGetItem(bot.ServerTable, channelID, &srv)
 	if err != nil {
 		bot.Logger.Error("error in savegameDownload", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
-	if inst.SpecName == "" {
+	if srv.SpecName == "" {
 		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
 	// Get the presigned URL
-	url, err := internal.PresignGetS3Object(bot.Bucket, inst.Name, time.Minute)
+	url, err := internal.PresignGetS3Object(bot.Bucket, srv.Name, time.Minute)
 	if err != nil {
 		bot.Logger.Error("error in savegameDownload", zap.String("culprit", "PresignGetS3Object"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
 
 	// We don't use the bot.replyLink approach because S3 presigned URL are too long
-	return bot.reply("Link to %s savegame: [Download](%s)", inst.Name, url)
+	return bot.reply("Link to %s savegame: [Download](%s)", srv.Name, url)
 }
 
 // savegameUpload creates a link protected with a MAC and TTL, to the "upload"
@@ -916,13 +915,13 @@ func (bot Frontend) savegameUpload(itn discordgo.Interaction, botDomain string) 
 	}
 
 	// Check that we are in a server channel
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbGetItem(bot.InstanceTable, itn.ChannelID, &inst)
+	srv := internal.Server{}
+	err := internal.DynamodbGetItem(bot.ServerTable, itn.ChannelID, &srv)
 	if err != nil {
 		bot.Logger.Error("error in savegameUpload", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
-	if inst.SpecName == "" {
+	if srv.SpecName == "" {
 		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
@@ -944,7 +943,7 @@ func (bot Frontend) savegameUpload(itn discordgo.Interaction, botDomain string) 
 		Path:     "upload",
 		RawQuery: values.Encode(),
 	}
-	return bot.replyLink(url.String(), fmt.Sprintf("Open %s savegame upload page", inst.Name), "")
+	return bot.replyLink(url.String(), fmt.Sprintf("Open %s savegame upload page", srv.Name), "")
 }
 
 // Cache of the choices between lambda calls
@@ -960,7 +959,7 @@ func (bot Frontend) autocompleteSpinup() (events.APIGatewayProxyResponse, error)
 		return bot.replyAutocomplete(__choicesCache)
 	}
 
-	allSpec, err := internal.DynamodbScan[internal.ServerSpec](bot.InstanceTable)
+	allSpec, err := internal.DynamodbScan[internal.ServerSpec](bot.SpecTable)
 	if err != nil {
 		return internal.Error500(), fmt.Errorf("DynamodbScan / %w", err)
 	}

@@ -42,7 +42,7 @@ func IsAdmin(member *discordgo.Member) bool {
 var __guildsCommands = []*discordgo.ApplicationCommand{
 	{
 		Name:        SpinupAPI,
-		Description: "Start a new server instance",
+		Description: "Start a new server",
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Name:         "game-type",
@@ -103,23 +103,23 @@ var __guildsCommands = []*discordgo.ApplicationCommand{
 	},
 	{
 		Name:        StartAPI,
-		Description: "Start a server instance (run in instance channel)",
+		Description: "Start a server instance (run in server channel)",
 	},
 	{
 		Name:        StopAPI,
-		Description: "Stop a running server instance (run in instance channel)",
+		Description: "Stop a running server instance (run in server channel)",
 	},
 	{
 		Name:        StatusAPI,
-		Description: "Give the status of a server instance (run in instance channel)",
+		Description: "Give the running status of a server (run in server channel)",
 	},
 	{
 		Name:        DownloadAPI,
-		Description: "Retrieve the savegame of a server instance (run in instance channel)",
+		Description: "Retrieve the savegame of a server (run in server channel)",
 	},
 	{
 		Name:        UploadAPI,
-		Description: "Upload a savegame to a server instance (run in instance channel)",
+		Description: "Upload a savegame to a server (run in server channel)",
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Name:        "multiparts",

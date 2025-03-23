@@ -84,18 +84,18 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 	task := ecsType.Task{}
 	json.Unmarshal(event.Detail, &task)
 
-	// Retrieve server instance details
-	inst, err := internal.DynamodbScanFindFirst[internal.ServerInstance](bot.InstanceTable, "taskArn", *task.TaskArn)
+	// Retrieve server details
+	srv, err := internal.DynamodbScanFindFirst[internal.Server](bot.ServerTable, "taskArn", *task.TaskArn)
 	if err != nil {
 		bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
-		bot.message(inst.ChannelID, "🚫 Notification error")
+		bot.message(srv.ChannelID, "🚫 Notification error")
 		return
 	}
 
 	// Send a message depending on the task status
 	switch internal.GetTaskStatus(&task) {
 	case internal.TaskStarting:
-		bot.message(inst.ThreadID, "📢 Task state: %s", *task.LastStatus)
+		bot.message(srv.ThreadID, "📢 Task state: %s", *task.LastStatus)
 	case internal.TaskRunning:
 		// Get running details: IP
 		ip, err := internal.GetTaskIP(&task)
@@ -104,26 +104,26 @@ func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
 		}
 		// Get spec details: ports
 		spec := internal.ServerSpec{}
-		err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+		err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
 		if err != nil {
 			bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
-			bot.message(inst.ChannelID, "🚫 Notification error")
+			bot.message(srv.ChannelID, "🚫 Notification error")
 			return
 		}
 		// Message with everything needed to connect
-		bot.renameChannel(inst.ThreadID, "🟢 Instance online: %s", ip)
-		bot.message(inst.ThreadID, "✅ Instance online ! ```%s```Open ports: %s", ip, spec.OpenPorts())
+		bot.renameChannel(srv.ThreadID, "🟢 Instance online: %s", ip)
+		bot.message(srv.ThreadID, "✅ Instance online ! ```%s```Open ports: %s", ip, spec.OpenPorts())
 	case internal.TaskStopping:
-		bot.message(inst.ThreadID, "📢 Task is going offline: %s", *task.LastStatus)
+		bot.message(srv.ThreadID, "📢 Task is going offline: %s", *task.LastStatus)
 	case internal.TaskStopped:
-		bot.renameChannel(inst.ThreadID, "🔴 Instance offline")
-		bot.message(inst.ThreadID, "📢 Task is offline")
-		bot.Logger.Debug("notify: flag instance as definitely down", zap.String("channelID", inst.ChannelID))
-		inst.TaskArn = ""
-		inst.ThreadID = ""
-		if err = internal.DynamodbPutItem(bot.InstanceTable, inst); err != nil {
+		bot.renameChannel(srv.ThreadID, "🔴 Instance offline")
+		bot.message(srv.ThreadID, "📢 Task is offline")
+		bot.Logger.Debug("notify: flag instance as definitely down", zap.String("channelID", srv.ChannelID))
+		srv.TaskArn = ""
+		srv.ThreadID = ""
+		if err = internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
 			bot.Logger.Error("error in stopServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
-			bot.message(inst.ChannelID, "🚫 Notification error")
+			bot.message(srv.ChannelID, "🚫 Notification error")
 		}
 	}
 }
@@ -302,9 +302,9 @@ func (bot Backend) _getSpec(args internal.RegisterGameArgs) (spec internal.Serve
 
 //===== Section: game spinup
 
-// spinupServer handles the creation of a new server instance. This function
+// spinupServer handles the creation of a new server. This function
 // notably creates a dicsord channel with its permissions, an ECS task
-// definition and persists the instance in DynamoDB.
+// definition and persists the server in DynamoDB.
 func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.SpinupArgs)
 	bot.Logger.Debug("received server spinup request", zap.Any("args", args))
@@ -317,11 +317,11 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	instName := fmt.Sprintf("%s-%d", args.GameName, spec.ServerCount)
-	taskFamily := fmt.Sprintf("lsdc2-%s-%s", args.GuildID, instName)
+	srvName := fmt.Sprintf("%s-%d", args.GameName, spec.ServerCount)
+	taskFamily := fmt.Sprintf("lsdc2-%s-%s", args.GuildID, srvName)
 
 	// Create server channel
-	chanID, err := bot._createServerChannel(cmd, args, instName)
+	chanID, err := bot._createServerChannel(cmd, args, srvName)
 	if err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "_createServerChannel"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
@@ -330,22 +330,22 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 
 	// Register ECS task definition
 	bot.Logger.Debug("spinupServer: register ECS task", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
-	if err = bot._registerTask(taskFamily, instName, spec, args.Env); err != nil {
+	if err = bot._registerTask(taskFamily, srvName, spec, args.Env); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "_registerTask"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
-	// And register instance in db
-	bot.Logger.Debug("spinupServer: register instance", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
-	inst := internal.ServerInstance{
+	// And register server in db
+	bot.Logger.Debug("spinupServer: register server", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
+	srv := internal.Server{
 		GuildID:    args.GuildID,
-		Name:       instName,
+		Name:       srvName,
 		SpecName:   spec.Name,
 		ChannelID:  chanID,
 		TaskFamily: taskFamily,
 	}
-	if err = internal.DynamodbPutItem(bot.InstanceTable, inst); err != nil {
+	if err = internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -355,7 +355,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 }
 
 // _getSpecAndIncreaseCount retrieves the ServerSpec and increment the
-// spec count, for specific usage of server instance creation.
+// spec count, for specific usage of server creation.
 func (bot Backend) _getSpecAndIncreaseCount(args internal.SpinupArgs) (spec internal.ServerSpec, err error) {
 	bot.Logger.Debug("spinupServer: get spec", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	if err = internal.DynamodbGetItem(bot.SpecTable, args.GameName, &spec); err != nil {
@@ -379,7 +379,7 @@ func (bot Backend) _getSpecAndIncreaseCount(args internal.SpinupArgs) (spec inte
 
 // _createServerChannel creates a server channel with the proper
 // members and command persmissions
-func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.SpinupArgs, instName string) (chanID string, err error) {
+func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.SpinupArgs, srvName string) (chanID string, err error) {
 	// Retrieve guild conf
 	bot.Logger.Debug("spinupServer: get guild conf", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	gc := internal.GuildConf{}
@@ -392,7 +392,7 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 	sessBot, _ := discordgo.New("Bot " + bot.Token)
 	bot.Logger.Debug("spinupServer: create channel", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	channel, err := sessBot.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
-		Name:     instName,
+		Name:     srvName,
 		Type:     discordgo.ChannelTypeGuildText,
 		ParentID: gc.ChannelCategoryID,
 		PermissionOverwrites: []*discordgo.PermissionOverwrite{
@@ -434,12 +434,13 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 	return
 }
 
-func (bot Backend) _registerTask(taskFamily string, instName string, spec internal.ServerSpec, confEnv map[string]string) error {
+func (bot Backend) _registerTask(taskFamily string, srvName string, spec internal.ServerSpec, confEnv map[string]string) error {
 	if spec.EnvMap == nil {
 		spec.EnvMap = map[string]string{}
 	}
 	spec.EnvMap["LSDC2_BUCKET"] = bot.Bucket
-	spec.EnvMap["LSDC2_INSTANCE"] = instName
+	spec.EnvMap["LSDC2_INSTANCE"] = srvName
+	spec.EnvMap["LSDC2_SERVER"] = srvName
 	spec.EnvMap["LSDC2_QUEUE_URL"] = bot.QueueUrl
 	maps.Copy(spec.EnvMap, confEnv)
 	return internal.RegisterTask(bot.AwsRegion, taskFamily, spec, bot.Lsdc2Stack)
@@ -447,14 +448,14 @@ func (bot Backend) _registerTask(taskFamily string, instName string, spec intern
 
 //===== Section: game conf
 
-// confServer handles the configuration of an existing server instance.
+// confServer handles the configuration of an existing server.
 func (bot Backend) confServer(cmd internal.BackendCmd) {
-	// Get the server instance
+	// Get the server
 	args := *cmd.Args.(*internal.ConfArgs)
 	bot.Logger.Debug("received server conf request", zap.Any("args", args))
 
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbGetItem(bot.InstanceTable, args.ChannelID, &inst)
+	srv := internal.Server{}
+	err := internal.DynamodbGetItem(bot.ServerTable, args.ChannelID, &srv)
 	if err != nil {
 		bot.Logger.Error("error in confServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
@@ -463,7 +464,7 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 
 	// Get the game spec
 	spec := internal.ServerSpec{}
-	err = internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec)
+	err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
 	if err != nil {
 		bot.Logger.Error("error in confServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
@@ -471,14 +472,14 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 	}
 
 	// ECS task revisions
-	bot.Logger.Debug("confServer: update ECS task", zap.String("guildID", inst.GuildID), zap.String("instance", inst.Name))
-	if err = bot._registerTask(inst.TaskFamily, inst.Name, spec, args.Env); err != nil {
+	bot.Logger.Debug("confServer: update ECS task", zap.String("guildID", srv.GuildID), zap.String("server", srv.Name))
+	if err = bot._registerTask(srv.TaskFamily, srv.Name, spec, args.Env); err != nil {
 		bot.Logger.Error("error in confServer", zap.String("culprit", "RegisterTask"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
-	bot.followUp(cmd, "✅ %s server configuration updated ! (require server restart)", inst.Name)
+	bot.followUp(cmd, "✅ %s server configuration updated ! (require server restart)", srv.Name)
 }
 
 //===== Section: game destroy
@@ -489,18 +490,18 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.DestroyArgs)
 	bot.Logger.Debug("received server destroy request", zap.Any("args", args))
 
-	// Retrieve ServerInstance from the db
-	bot.Logger.Debug("destroy: get inst", zap.String("channelID", args.ChannelID))
-	inst := internal.ServerInstance{}
-	if err := internal.DynamodbGetItem(bot.InstanceTable, args.ChannelID, &inst); err != nil {
+	// Retrieve server details
+	bot.Logger.Debug("destroy: get srv", zap.String("channelID", args.ChannelID))
+	srv := internal.Server{}
+	if err := internal.DynamodbGetItem(bot.ServerTable, args.ChannelID, &srv); err != nil {
 		bot.Logger.Error("error in destroyServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
 
 	// Check if a task is running in which case abort the server destruction
-	if inst.TaskArn != "" {
-		task, err := internal.DescribeTask(inst, bot.Lsdc2Stack)
+	if srv.TaskArn != "" {
+		task, err := internal.DescribeTask(srv.TaskArn, bot.Lsdc2Stack)
 		if err != nil {
 			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
 			bot.followUp(cmd, "🚫 Internal error")
@@ -516,9 +517,9 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 	}
 
 	// Destroy the server
-	err := bot._destroyServerInstance(inst)
+	err := bot._destroyServer(srv)
 	if err != nil {
-		bot.Logger.Error("error in destroyServer", zap.String("culprit", "_destroyServerInstance"), zap.Error(err))
+		bot.Logger.Error("error in destroyServer", zap.String("culprit", "_destroyServer"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -526,23 +527,23 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "✅ Server destruction done !")
 }
 
-// _destroyServerInstance perform the resources removal. This span the
+// _destroyServer perform the resources removal. This span the
 // Discord channel, the ECS task definition and the entry in DynamoDB
-func (bot Backend) _destroyServerInstance(inst internal.ServerInstance) (err error) {
+func (bot Backend) _destroyServer(srv internal.Server) (err error) {
 	sess, _ := discordgo.New("Bot " + bot.Token)
 
-	bot.Logger.Debug("destroy: delete channel", zap.String("channelID", inst.ChannelID))
-	if _, err = sess.ChannelDelete(inst.ChannelID); err != nil {
+	bot.Logger.Debug("destroy: delete channel", zap.String("channelID", srv.ChannelID))
+	if _, err = sess.ChannelDelete(srv.ChannelID); err != nil {
 		return fmt.Errorf("ChannelDelete / %w", err)
 	}
 
-	bot.Logger.Debug("destroy: unregister task", zap.String("channelID", inst.ChannelID))
-	if err = internal.DeregisterTaskFamily(inst.TaskFamily); err != nil {
+	bot.Logger.Debug("destroy: unregister task", zap.String("channelID", srv.ChannelID))
+	if err = internal.DeregisterTaskFamily(srv.TaskFamily); err != nil {
 		return fmt.Errorf("DeregisterTaskFamiliy / %w", err)
 	}
 
-	bot.Logger.Debug("destroy: unregister instance", zap.String("channelID", inst.ChannelID))
-	if err = internal.DynamodbDeleteItem(bot.InstanceTable, inst.ChannelID); err != nil {
+	bot.Logger.Debug("destroy: unregister server", zap.String("channelID", srv.ChannelID))
+	if err = internal.DynamodbDeleteItem(bot.ServerTable, srv.ChannelID); err != nil {
 		return fmt.Errorf("DynamodbDeleteItem / %w", err)
 	}
 
@@ -603,7 +604,7 @@ func (bot Backend) welcomeGuild(cmd internal.BackendCmd) {
 	}
 
 	// Persist guild in db
-	bot.Logger.Debug("welcoming: register instance", zap.String("guildID", args.GuildID))
+	bot.Logger.Debug("welcoming: register server", zap.String("guildID", args.GuildID))
 	if err := internal.DynamodbPutItem(bot.GuildTable, gc); err != nil {
 		bot.Logger.Error("error in welcomeGuild", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
@@ -692,7 +693,7 @@ func (bot Backend) _createChannels(args internal.WelcomeArgs, gc *internal.Guild
 // channels and roles so that:
 //  1. Admin can run admin commands in the admin channel
 //  2. Users can run server start/stop commands (but in no channel
-//     since at this point, no server instance exsist)
+//     since at this point, no server exist)
 func (bot Backend) _setupCommandPermissions(
 	cmd internal.BackendCmd,
 	args internal.WelcomeArgs,
@@ -746,16 +747,16 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 
 	// Destroying guild games
 	bot.Logger.Debug("goodbyeing: destroying games", zap.String("guildID", args.GuildID))
-	allInst, err := internal.DynamodbScan[internal.ServerInstance](bot.InstanceTable)
+	allSrv, err := internal.DynamodbScan[internal.Server](bot.ServerTable)
 	if err != nil {
 		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "DynamodbScan"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	for _, inst := range allInst {
-		if inst.GuildID == args.GuildID {
-			if err := bot._destroyServerInstance(inst); err != nil {
-				bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "_destroyServerInstance"), zap.Error(err))
+	for _, srv := range allSrv {
+		if srv.GuildID == args.GuildID {
+			if err := bot._destroyServer(srv); err != nil {
+				bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "_destroyServer"), zap.Error(err))
 				bot.followUp(cmd, "🚫 Internal error")
 				return
 			}
@@ -785,7 +786,7 @@ func (bot Backend) goodbyeGuild(cmd internal.BackendCmd) {
 	}
 
 	// De-register conf
-	bot.Logger.Debug("goodbyeing: deregister instance", zap.String("guildID", args.GuildID))
+	bot.Logger.Debug("goodbyeing: deregister guild", zap.String("guildID", args.GuildID))
 	if err := internal.DynamodbDeleteItem(bot.GuildTable, gc.GuildID); err != nil {
 		bot.Logger.Error("error in goodbyeGuild", zap.String("culprit", "DynamodbDeleteItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
@@ -967,14 +968,14 @@ func (bot Backend) kickMember(cmd internal.BackendCmd) {
 
 		// ... and all servers
 		bot.Logger.Debug("kick: get list of channel", zap.String("guildID", args.GuildID))
-		allInst, err := internal.DynamodbScan[internal.ServerInstance](bot.InstanceTable)
+		allSrv, err := internal.DynamodbScan[internal.Server](bot.ServerTable)
 		if err != nil {
 			bot.Logger.Error("error in kickMember", zap.String("culprit", "DynamodbScanAttr"), zap.Error(err))
 			bot.followUp(cmd, "🚫 Internal error")
 			return
 		}
-		for _, inst := range allInst {
-			err = internal.RemoveUserView(sess, inst.ChannelID, args.TargetID)
+		for _, srv := range allSrv {
+			err = internal.RemoveUserView(sess, srv.ChannelID, args.TargetID)
 			if err != nil {
 				bot.Logger.Error("error in kickMember", zap.String("culprit", "RemoveUserView"), zap.Error(err))
 				bot.followUp(cmd, "🚫 Internal error")
@@ -1050,12 +1051,12 @@ func (bot Backend) _getRequesterTargetAndGuildData(sess *discordgo.Session, requ
 
 // _ensureChannelIsAServer returns an error if the channel is not of a server
 func (bot Backend) _ensureChannelIsAServer(channelID string) error {
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbGetItem(bot.InstanceTable, channelID, &inst)
+	srv := internal.Server{}
+	err := internal.DynamodbGetItem(bot.ServerTable, channelID, &srv)
 	if err != nil {
 		return fmt.Errorf("DynamodbGetItem / %w", err)
 	}
-	if inst.ChannelID != channelID {
+	if srv.ChannelID != channelID {
 		return errors.New("someone managed to run the invite command in a non-game channel")
 	}
 	return nil
@@ -1068,15 +1069,15 @@ func (bot Backend) _ensureChannelIsAServer(channelID string) error {
 func (bot Backend) forwardTaskNotification(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.TaskNotifyArgs)
 
-	// Retrieve server instance details
-	inst, err := internal.DynamodbScanFindFirst[internal.ServerInstance](bot.InstanceTable, "name", args.InstanceName)
+	// Retrieve server details
+	srv, err := internal.DynamodbScanFindFirst[internal.Server](bot.ServerTable, "name", args.InstanceName)
 	if err != nil {
 		bot.Logger.Error("error in forwardTaskNotification", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
-		bot.message(inst.ChannelID, "🚫 Notification error")
+		bot.message(srv.ChannelID, "🚫 Notification error")
 		return
 	}
 
-	bot.message(inst.ThreadID, "📢 %s", args.Message)
+	bot.message(srv.ThreadID, "📢 %s", args.Message)
 }
 
 //===== Section: bot reply helpers
