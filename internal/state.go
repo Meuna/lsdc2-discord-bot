@@ -33,7 +33,7 @@ type Lsdc2Stack struct {
 	Bucket           string   `env:"SAVEGAME_BUCKET"`
 	SpecTable        string   `env:"SPEC_TABLE"`
 	GuildTable       string   `env:"GUILD_TABLE"`
-	InstanceTable    string   `env:"INSTANCE_TABLE"`
+	ServerTable      string   `env:"SERVER_TABLE"`
 	ExecutionRoleArn string   `env:"EXECUTION_ROLE_ARN"`
 	TaskRoleArn      string   `env:"TASK_ROLE_ARN"`
 }
@@ -216,9 +216,9 @@ type GuildConf struct {
 	UserRoleID        string `json:"userRole" dynamodbav:"userRole"`
 }
 
-//===== Section: ServerInstance
+//===== Section: Server
 
-type ServerInstance struct {
+type Server struct {
 	ChannelID  string `json:"key" dynamodbav:"key"`
 	GuildID    string `json:"guildID" dynamodbav:"guildID"`
 	Name       string `json:"name" dynamodbav:"name"`

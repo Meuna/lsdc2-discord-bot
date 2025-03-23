@@ -248,12 +248,12 @@ func ecsTags() []ecsTypes.Tag {
 //
 // Parameters:
 //   - region: The AWS region.
-//   - instName: The name of the task definition family.
+//   - srvName: The name of the task definition family.
 //   - spec: The server specification containing CPU, memory, image,
 //     environment variables, and port mappings.
 //   - stack: The stack configuration containing task role ARN, execution
 //     role ARN, and log group.
-func RegisterTask(region string, instName string, spec ServerSpec, stack Lsdc2Stack) error {
+func RegisterTask(region string, srvName string, spec ServerSpec, stack Lsdc2Stack) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return err
@@ -262,7 +262,7 @@ func RegisterTask(region string, instName string, spec ServerSpec, stack Lsdc2St
 
 	input := &ecs.RegisterTaskDefinitionInput{
 		Tags:                    ecsTags(),
-		Family:                  aws.String(instName),
+		Family:                  aws.String(srvName),
 		Cpu:                     aws.String(spec.Cpu),
 		Memory:                  aws.String(spec.Memory),
 		EphemeralStorage:        &ecsTypes.EphemeralStorage{SizeInGiB: spec.Storage},
@@ -324,8 +324,7 @@ func DeregisterTaskFamily(taskFamily string) error {
 	return err
 }
 
-// StartTask starts an ECS task using the provided server instance and stack configuration.
-//
+// StartTask starts an ECS task for the provided family and security groupe.
 // Returns the ARN of the started task.
 func StartTask(stack Lsdc2Stack, taskFamily string, securityGroup string) (arn string, err error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
@@ -368,8 +367,8 @@ func StartTask(stack Lsdc2Stack, taskFamily string, securityGroup string) (arn s
 	return
 }
 
-// StopTask stops a running ECS task for a given server instance and stack configuration
-func StopTask(inst ServerInstance, stack Lsdc2Stack) error {
+// StopTask stops the provided ECS task
+func StopTask(taskArn string, stack Lsdc2Stack) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return err
@@ -383,17 +382,15 @@ func StopTask(inst ServerInstance, stack Lsdc2Stack) error {
 
 	_, err = client.StopTask(context.TODO(), &ecs.StopTaskInput{
 		Cluster: aws.String(stack.Cluster),
-		Task:    aws.String(inst.TaskArn),
+		Task:    aws.String(taskArn),
 	})
 
 	return err
 }
 
-// DescribeTask retrieves the details of the server instance ECS task, using the task ARN
-// persisted in the ServerInstance struct.
-//
-// Returns a pointer to the ECS task details.
-func DescribeTask(inst ServerInstance, stack Lsdc2Stack) (*ecsTypes.Task, error) {
+// DescribeTask retrieves the details of the provided ECS task. Returns a
+// pointer to the ECS task details.
+func DescribeTask(taskArn string, stack Lsdc2Stack) (*ecsTypes.Task, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return nil, err
@@ -402,7 +399,7 @@ func DescribeTask(inst ServerInstance, stack Lsdc2Stack) (*ecsTypes.Task, error)
 
 	result, err := client.DescribeTasks(context.TODO(), &ecs.DescribeTasksInput{
 		Cluster: aws.String(stack.Cluster),
-		Tasks:   []string{inst.TaskArn},
+		Tasks:   []string{taskArn},
 	})
 	if err != nil {
 		return nil, err
