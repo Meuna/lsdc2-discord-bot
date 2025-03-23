@@ -170,8 +170,8 @@ type KickArgs struct {
 }
 
 type TaskNotifyArgs struct {
-	InstanceName string
-	Message      string
+	ServerName string `json:"InstanceName"` // FIXME: this is a temporary fix for serverwrap
+	Message    string
 }
 
 // QueueMarshalledCmd marshals a BackendCmd into JSON and sends it to the specified queue URL.

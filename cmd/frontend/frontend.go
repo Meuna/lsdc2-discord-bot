@@ -500,21 +500,6 @@ func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (event
 		return bot.reply("🚫 Server %s not found", serverName)
 	}
 
-	// Check if a task is running
-	if srv.TaskArn != "" {
-		task, err := internal.DescribeTask(srv.TaskArn, bot.Lsdc2Stack)
-		if err != nil {
-			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
-			return bot.reply("🚫 Internal error")
-		}
-		if task != nil {
-			taskStatus := internal.GetTaskStatus(task)
-			if taskStatus != internal.TaskStopped {
-				return bot.reply("⚠️ The server is running. Please turn it off and try again")
-			}
-		}
-	}
-
 	cmd := internal.BackendCmd{
 		Args: &internal.DestroyArgs{
 			ChannelID: srv.ChannelID,
@@ -734,22 +719,20 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 		return bot.reply("🚫 Unrecognised server channel")
 	}
 
-	// Get the game spec
-	spec := internal.ServerSpec{}
-	err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
+	// Check if the server is already running
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "serverName", srv.Name)
 	if err != nil {
-		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
-
-	// Check that the task is not yet running
-	if srv.TaskArn != "" {
-		task, err := internal.DescribeTask(srv.TaskArn, bot.Lsdc2Stack)
+	if inst.EngineID != "" {
+		task, err := internal.DescribeTask(inst.EngineID, bot.Lsdc2Stack.Cluster)
 		if err != nil {
 			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
 			return bot.reply("🚫 Internal error")
 		}
 		if task != nil {
+			// Test for early return cases
 			switch internal.GetTaskStatus(task) {
 			case internal.TaskStopping:
 				return bot.reply("⚠️ Server is going offline. Please wait and try again")
@@ -760,6 +743,14 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 			}
 			// No match == we can start a server
 		}
+	}
+
+	// Get the game spec
+	spec := internal.ServerSpec{}
+	err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
+	if err != nil {
+		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
 	}
 
 	// Start a dedicated thread
@@ -778,9 +769,13 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	}
 
 	// Register the thread ID and task ARN in the instance entry
-	srv.TaskArn = taskArn
-	srv.ThreadID = thread.ID
-	err = internal.DynamodbPutItem(bot.ServerTable, srv)
+	err = internal.DynamodbPutItem(bot.InstanceTable, internal.Instance{
+		EngineID:        taskArn,
+		ThreadID:        thread.ID,
+		ServerName:      srv.Name,
+		ServerChannelID: srv.ChannelID,
+		OpenPorts:       fmt.Sprintf("%s", spec.OpenPorts()),
+	})
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -794,24 +789,19 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 //  2. Verifies that the task is not already stop.
 //  3. If not, issues the stop request.
 func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse, error) {
-	// Retrieve instance details
-	srv := internal.Server{}
-	err := internal.DynamodbGetItem(bot.ServerTable, channelID, &srv)
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "serverChannelID", channelID)
 	if err != nil {
-		bot.Logger.Error("error in stopServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
-	}
-	if srv.SpecName == "" {
-		return bot.reply("🚫 Internal error. Are you in a server channel ?")
 	}
 
 	// Check that the task is not already stopped
-	if srv.TaskArn == "" {
+	if inst.EngineID == "" {
 		return bot.reply("🟥 Server offline")
 	} else {
-		task, err := internal.DescribeTask(srv.TaskArn, bot.Lsdc2Stack)
+		task, err := internal.DescribeTask(inst.EngineID, bot.Lsdc2Stack.Cluster)
 		if err != nil {
-			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
+			bot.Logger.Error("error in stopServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
 			return bot.reply("🚫 Internal error")
 		}
 		if task != nil && internal.GetTaskStatus(task) == internal.TaskStopped {
@@ -820,8 +810,8 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	}
 
 	// Issue the task stop request
-	bot.Logger.Debug("stoping: stop task", zap.String("channelID", srv.ChannelID))
-	if err = internal.StopTask(srv.TaskArn, bot.Lsdc2Stack); err != nil {
+	bot.Logger.Debug("stoping: stop task", zap.String("channelID", channelID), zap.Any("instance", inst))
+	if err = internal.StopTask(inst.EngineID, bot.Lsdc2Stack.Cluster); err != nil {
 		bot.Logger.Error("error in stopServer", zap.String("culprit", "StopTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
@@ -831,22 +821,17 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 // serverStatus retrieves the status of the server associated with the
 // given channel ID.
 func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyResponse, error) {
-	// Retrieve instance details
-	srv := internal.Server{}
-	err := internal.DynamodbGetItem(bot.ServerTable, channelID, &srv)
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "serverChannelID", channelID)
 	if err != nil {
-		bot.Logger.Error("error in serverStatus", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
-	}
-	if srv.SpecName == "" {
-		return bot.reply("⚠️ This should not happen :thinking:. Are you in a server channel ?")
 	}
 
 	// Status: offline
-	if srv.TaskArn == "" {
+	if inst.EngineID == "" {
 		return bot.reply("🟥 Server offline")
 	}
-	task, err := internal.DescribeTask(srv.TaskArn, bot.Lsdc2Stack)
+	task, err := internal.DescribeTask(inst.EngineID, bot.Lsdc2Stack.Cluster)
 	if err != nil {
 		bot.Logger.Error("error in serverStatus", zap.String("culprit", "DescribeTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -869,13 +854,7 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 		return bot.reply(":thinking: Public IP not available, contact administrator")
 	}
 
-	spec := internal.ServerSpec{}
-	err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
-	if err != nil {
-		bot.Logger.Error("error in serverStatus", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-	return bot.reply("✅ Server online at %s (open ports: %s)", ip, spec.OpenPorts())
+	return bot.reply("✅ Instance online ! ```%s```Open ports: %s", ip, inst.OpenPorts)
 }
 
 // savegameDownload creates a pre-signed URL for the savegame file stored in

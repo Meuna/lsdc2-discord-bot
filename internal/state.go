@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -34,6 +35,7 @@ type Lsdc2Stack struct {
 	SpecTable        string   `env:"SPEC_TABLE"`
 	GuildTable       string   `env:"GUILD_TABLE"`
 	ServerTable      string   `env:"SERVER_TABLE"`
+	InstanceTable    string   `env:"INSTANCE_TABLE"`
 	ExecutionRoleArn string   `env:"EXECUTION_ROLE_ARN"`
 	TaskRoleArn      string   `env:"TASK_ROLE_ARN"`
 }
@@ -147,6 +149,7 @@ func (s ServerSpec) OpenPorts() []string {
 		keys[idx] = k
 		idx++
 	}
+	sort.Strings(keys)
 	return keys
 }
 
@@ -224,8 +227,16 @@ type Server struct {
 	Name       string `json:"name" dynamodbav:"name"`
 	SpecName   string `json:"specName" dynamodbav:"specName"`
 	TaskFamily string `json:"taskFamily" dynamodbav:"taskFamily"`
-	TaskArn    string `json:"taskArn" dynamodbav:"taskArn"`
-	ThreadID   string `json:"threadID" dynamodbav:"threadID"`
+}
+
+//===== Section: Instace
+
+type Instance struct {
+	EngineID        string `json:"key" dynamodbav:"key"`
+	ThreadID        string `json:"threadID" dynamodbav:"threadID"`
+	ServerName      string `json:"serverName" dynamodbav:"serverName"`
+	ServerChannelID string `json:"serverChannelID" dynamodbav:"serverChannelID"`
+	OpenPorts       string `json:"openPorts" dynamodbav:"openPorts"`
 }
 
 //===== Section: ECS task status

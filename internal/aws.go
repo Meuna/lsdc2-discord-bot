@@ -368,20 +368,15 @@ func StartTask(stack Lsdc2Stack, taskFamily string, securityGroup string) (arn s
 }
 
 // StopTask stops the provided ECS task
-func StopTask(taskArn string, stack Lsdc2Stack) error {
+func StopTask(taskArn string, clusterArn string) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return err
 	}
 	client := ecs.NewFromConfig(cfg)
 
-	subnets := make([]*string, len(stack.Subnets))
-	for idx, sn := range stack.Subnets {
-		subnets[idx] = aws.String(sn)
-	}
-
 	_, err = client.StopTask(context.TODO(), &ecs.StopTaskInput{
-		Cluster: aws.String(stack.Cluster),
+		Cluster: aws.String(clusterArn),
 		Task:    aws.String(taskArn),
 	})
 
@@ -390,7 +385,7 @@ func StopTask(taskArn string, stack Lsdc2Stack) error {
 
 // DescribeTask retrieves the details of the provided ECS task. Returns a
 // pointer to the ECS task details.
-func DescribeTask(taskArn string, stack Lsdc2Stack) (*ecsTypes.Task, error) {
+func DescribeTask(taskArn string, clusterArn string) (*ecsTypes.Task, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return nil, err
@@ -398,7 +393,7 @@ func DescribeTask(taskArn string, stack Lsdc2Stack) (*ecsTypes.Task, error) {
 	client := ecs.NewFromConfig(cfg)
 
 	result, err := client.DescribeTasks(context.TODO(), &ecs.DescribeTasksInput{
-		Cluster: aws.String(stack.Cluster),
+		Cluster: aws.String(clusterArn),
 		Tasks:   []string{taskArn},
 	})
 	if err != nil {

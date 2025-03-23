@@ -71,59 +71,49 @@ func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
 
 	switch event.DetailType {
 	case "ECS Task State Change":
-		bot.notifyTaskUpdate(event)
+		bot.notifyEcsUpdate(event)
 	default:
 		bot.Logger.Error("event not handled", zap.String("event", event.DetailType))
 	}
 }
 
-// notifyTaskUpdate handles the notification of ECS task state updates
+// notifyEcsUpdate handles the notification of ECS task state updates
 // and sends appropriate messages based on the task status.
-func (bot Backend) notifyTaskUpdate(event events.CloudWatchEvent) {
+func (bot Backend) notifyEcsUpdate(event events.CloudWatchEvent) {
 	bot.Logger.Debug("received ECS task state")
 	task := ecsType.Task{}
 	json.Unmarshal(event.Detail, &task)
 
-	// Retrieve server details
-	srv, err := internal.DynamodbScanFindFirst[internal.Server](bot.ServerTable, "taskArn", *task.TaskArn)
+	// Retrieve instance thread
+	inst := internal.Instance{}
+	err := internal.DynamodbGetItem(bot.InstanceTable, *task.TaskArn, &inst)
 	if err != nil {
-		bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
-		bot.message(srv.ChannelID, "🚫 Notification error")
+		bot.Logger.Error("error in notifyEcsUpdate", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		return
 	}
 
 	// Send a message depending on the task status
 	switch internal.GetTaskStatus(&task) {
 	case internal.TaskStarting:
-		bot.message(srv.ThreadID, "📢 Task state: %s", *task.LastStatus)
+		bot.message(inst.ThreadID, "📢 Task state: %s", *task.LastStatus)
 	case internal.TaskRunning:
 		// Get running details: IP
 		ip, err := internal.GetTaskIP(&task)
 		if err != nil {
 			ip = "error retrieving ip"
 		}
-		// Get spec details: ports
-		spec := internal.ServerSpec{}
-		err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
-		if err != nil {
-			bot.Logger.Error("error in notifyTaskUpdate", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
-			bot.message(srv.ChannelID, "🚫 Notification error")
-			return
-		}
 		// Message with everything needed to connect
-		bot.renameChannel(srv.ThreadID, "🟢 Instance online: %s", ip)
-		bot.message(srv.ThreadID, "✅ Instance online ! ```%s```Open ports: %s", ip, spec.OpenPorts())
+		bot.renameChannel(inst.ThreadID, "🟢 Instance online: %s", ip)
+		bot.message(inst.ThreadID, "✅ Instance online ! ```%s```Open ports: %s", ip, inst.OpenPorts)
 	case internal.TaskStopping:
-		bot.message(srv.ThreadID, "📢 Task is going offline: %s", *task.LastStatus)
+		bot.message(inst.ThreadID, "📢 Task is going offline: %s", *task.LastStatus)
 	case internal.TaskStopped:
-		bot.renameChannel(srv.ThreadID, "🔴 Instance offline")
-		bot.message(srv.ThreadID, "📢 Task is offline")
-		bot.Logger.Debug("notify: flag instance as definitely down", zap.String("channelID", srv.ChannelID))
-		srv.TaskArn = ""
-		srv.ThreadID = ""
-		if err = internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
+		bot.renameChannel(inst.ThreadID, "🔴 Instance offline")
+		bot.message(inst.ThreadID, "📢 Task is offline")
+		bot.Logger.Info("notify: instance is down, remove instance DB entry", zap.String("EngineID", inst.EngineID))
+		if err = internal.DynamodbDeleteItem(bot.InstanceTable, inst.EngineID); err != nil {
 			bot.Logger.Error("error in stopServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
-			bot.message(srv.ChannelID, "🚫 Notification error")
+			return
 		}
 	}
 }
@@ -300,7 +290,7 @@ func (bot Backend) _getSpec(args internal.RegisterGameArgs) (spec internal.Serve
 	return
 }
 
-//===== Section: game spinup
+//===== Section: server spinup
 
 // spinupServer handles the creation of a new server. This function
 // notably creates a dicsord channel with its permissions, an ECS task
@@ -446,7 +436,7 @@ func (bot Backend) _registerTask(taskFamily string, srvName string, spec interna
 	return internal.RegisterTask(bot.AwsRegion, taskFamily, spec, bot.Lsdc2Stack)
 }
 
-//===== Section: game conf
+//===== Section: server conf
 
 // confServer handles the configuration of an existing server.
 func (bot Backend) confServer(cmd internal.BackendCmd) {
@@ -482,7 +472,7 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "✅ %s server configuration updated ! (require server restart)", srv.Name)
 }
 
-//===== Section: game destroy
+//===== Section: server destroy
 
 // destroyServer removes all resources create for a server, except for
 // its S3 savegames. The function abort if the server is running.
@@ -500,8 +490,14 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 	}
 
 	// Check if a task is running in which case abort the server destruction
-	if srv.TaskArn != "" {
-		task, err := internal.DescribeTask(srv.TaskArn, bot.Lsdc2Stack)
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "serverName", srv.Name)
+	if err != nil {
+		bot.Logger.Error("error in destroyServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
+		bot.message(srv.ChannelID, "🚫 Notification error")
+		return
+	}
+	if inst.EngineID != "" {
+		task, err := internal.DescribeTask(inst.EngineID, bot.Lsdc2Stack.Cluster)
 		if err != nil {
 			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
 			bot.followUp(cmd, "🚫 Internal error")
@@ -517,8 +513,7 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 	}
 
 	// Destroy the server
-	err := bot._destroyServer(srv)
-	if err != nil {
+	if err := bot._destroyServer(srv); err != nil {
 		bot.Logger.Error("error in destroyServer", zap.String("culprit", "_destroyServer"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -1070,14 +1065,13 @@ func (bot Backend) forwardTaskNotification(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.TaskNotifyArgs)
 
 	// Retrieve server details
-	srv, err := internal.DynamodbScanFindFirst[internal.Server](bot.ServerTable, "name", args.InstanceName)
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "serverName", args.ServerName)
 	if err != nil {
 		bot.Logger.Error("error in forwardTaskNotification", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
-		bot.message(srv.ChannelID, "🚫 Notification error")
 		return
 	}
 
-	bot.message(srv.ThreadID, "📢 %s", args.Message)
+	bot.message(inst.ThreadID, "📢 %s", args.Message)
 }
 
 //===== Section: bot reply helpers
