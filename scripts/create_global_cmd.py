@@ -1,10 +1,11 @@
 import requests
 import getpass
 
-app = input("Application id: ")
-token = getpass.getpass(prompt="Bot token: ")
+app = 
+token = 
 
 CHAT_INPUT = 1
+USER = 2
 GUILD_INSTALL = 0
 CTX_GUILD = 0
 CTX_BOT_DM = 1

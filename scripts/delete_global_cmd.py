@@ -1,8 +1,8 @@
 import requests
 import getpass
 
-app = input("Application id: ")
-token = getpass.getpass(prompt="Bot token: ")
+app = 
+token = 
 
 headers = {"Authorization": f"Bot {token}"}
 
@@ -16,3 +16,4 @@ for cmd in jbody:
     print(f"Deleting command: {cmd['name']}")
     cmd_url = url + "/" + cmd["id"]
     r = requests.delete(cmd_url, headers=headers)
+    print(f"{cmd['name']} result: ", r.content)
