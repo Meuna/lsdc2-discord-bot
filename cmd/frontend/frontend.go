@@ -665,7 +665,7 @@ func (bot Frontend) serverConfigurationCall(itn discordgo.Interaction) (events.A
 func (bot Frontend) memberInviteCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	requester := itn.Member
-	targetID := acd.Options[0].StringValue()
+	targetID := acd.Options[0].Value.(string) // We shortcut to the value because discordgo API want to query user details
 
 	cmd := internal.BackendCmd{
 		AppID: itn.AppID,
@@ -690,7 +690,7 @@ func (bot Frontend) memberInviteCall(itn discordgo.Interaction) (events.APIGatew
 func (bot Frontend) memberKickCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	requester := itn.Member
-	targetID := acd.Options[0].StringValue()
+	targetID := acd.Options[0].Value.(string) // We shortcut to the value because discordgo API want to query user details
 
 	cmd := internal.BackendCmd{
 		AppID: itn.AppID,
