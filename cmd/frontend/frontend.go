@@ -492,8 +492,7 @@ func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (event
 	serverName := acd.Options[0].StringValue()
 
 	// Retrieve the chanel ID
-	inst := internal.ServerInstance{}
-	err := internal.DynamodbScanFindFirst(bot.InstanceTable, "name", serverName, &inst)
+	inst, err := internal.DynamodbScanFindFirst[internal.ServerInstance](bot.InstanceTable, "name", serverName)
 	if err != nil {
 		bot.Logger.Error("error in confirmServerDestruction", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -961,16 +960,16 @@ func (bot Frontend) autocompleteSpinup() (events.APIGatewayProxyResponse, error)
 		return bot.replyAutocomplete(__choicesCache)
 	}
 
-	gameList, err := internal.DynamodbScanAttr(bot.SpecTable, "key")
+	allSpec, err := internal.DynamodbScan[internal.ServerSpec](bot.InstanceTable)
 	if err != nil {
-		return internal.Error500(), fmt.Errorf("DynamodbScanAttr / %w", err)
+		return internal.Error500(), fmt.Errorf("DynamodbScan / %w", err)
 	}
 
-	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(gameList))
-	for idx, item := range gameList {
+	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(allSpec))
+	for idx, item := range allSpec {
 		choices[idx] = &discordgo.ApplicationCommandOptionChoice{
-			Name:  item, // This is the value displayed to the user
-			Value: item, // This is the value sent to the command
+			Name:  item.Name, // This is the value displayed to the user
+			Value: item.Name, // This is the value sent to the command
 		}
 	}
 
