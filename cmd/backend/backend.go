@@ -379,8 +379,8 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 	}
 
 	// Create the channel, including its membership rights
+	bot.Logger.Debug("spinupServer: create channel", zap.Any("gc", gc), zap.String("srvName", srvName))
 	sessBot, _ := discordgo.New("Bot " + bot.Token)
-	bot.Logger.Debug("spinupServer: create channel", zap.String("guildID", args.GuildID), zap.String("gameName", args.GameName))
 	channel, err := sessBot.GuildChannelCreateComplex(args.GuildID, discordgo.GuildChannelCreateData{
 		Name:     srvName,
 		Type:     discordgo.ChannelTypeGuildText,
@@ -429,7 +429,7 @@ func (bot Backend) _registerTask(taskFamily string, srvName string, spec interna
 		spec.EnvMap = map[string]string{}
 	}
 	spec.EnvMap["LSDC2_BUCKET"] = bot.Bucket
-	spec.EnvMap["LSDC2_INSTANCE"] = srvName
+	spec.EnvMap["LSDC2_INSTANCE"] = srvName // FIXME: remove when serverwrap is fully updated
 	spec.EnvMap["LSDC2_SERVER"] = srvName
 	spec.EnvMap["LSDC2_QUEUE_URL"] = bot.QueueUrl
 	maps.Copy(spec.EnvMap, confEnv)
@@ -490,7 +490,7 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 	}
 
 	// Check if a task is running in which case abort the server destruction
-	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "serverName", srv.Name)
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerName", srv.Name)
 	if err != nil {
 		bot.Logger.Error("error in destroyServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		bot.message(srv.ChannelID, "🚫 Notification error")
@@ -1065,7 +1065,7 @@ func (bot Backend) forwardTaskNotification(cmd internal.BackendCmd) {
 	args := *cmd.Args.(*internal.TaskNotifyArgs)
 
 	// Retrieve server details
-	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "serverName", args.ServerName)
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerName", args.ServerName)
 	if err != nil {
 		bot.Logger.Error("error in forwardTaskNotification", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return

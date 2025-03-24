@@ -8,6 +8,8 @@ import (
 	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	dynamodbTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	ec2Types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	ecsTypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/caarlos0/env"
@@ -76,6 +78,15 @@ func InitBot() (BotEnv, error) {
 
 //===== Section: ServerSpec
 
+type Engine interface {
+	MissingField() []string
+}
+
+const (
+	EcsEngineType = "ecs"
+	Ec2EngineType = "ec2"
+)
+
 // TODO: implement a PortAndProtocol struct in case ECS allow for udp+tcp port forward
 // type PortAndProtocol struct {
 // 	Port     int32  `json:"port"`
@@ -83,45 +94,34 @@ func InitBot() (BotEnv, error) {
 // }
 
 type ServerSpec struct {
-	Name          string            `json:"key" dynamodbav:"key"`
-	Image         string            `json:"image" dynamodbav:"image"`
-	Cpu           string            `json:"cpu" dynamodbav:"cpu"`
-	Memory        string            `json:"memory" dynamodbav:"memory"`
-	Storage       int32             `json:"storage" dynamodbav:"storage"`
-	PortMap       map[string]string `json:"portMap" dynamodbav:"portMap"`
-	EnvMap        map[string]string `json:"envMap" dynamodbav:"envMap"`
-	EnvParamMap   map[string]string `json:"EnvParamMap" dynamodbav:"EnvParamMap"` // FIXME: un-capitalised for consistency
-	SecurityGroup string            `json:"securityGroup" dynamodbav:"securityGroup"`
-	ServerCount   int               `json:"severCount" dynamodbav:"severCount"`
+	Name          string            `json:"name" dynamodbav:"key"`
+	PortMap       map[string]string `json:"portMap"`
+	EnvMap        map[string]string `json:"envMap"`
+	EnvParamMap   map[string]string `json:"envParamMap"`
+	SecurityGroup string            `json:"securityGroup"`
+	ServerCount   int               `json:"severCount"`
+	EngineType    string            `json:"engineType"`
+	Engine        Engine            `json:"engine"`
 }
 
-// MissingField returns a list of required ServerSpec fields
-func (s ServerSpec) MissingField() []string {
-	missingFields := []string{}
-	if s.Name == "" {
-		missingFields = append(missingFields, "name")
-	}
-	if s.Image == "" {
-		missingFields = append(missingFields, "image")
-	}
-	if s.Cpu == "" {
-		missingFields = append(missingFields, "cpu")
-	}
-	if s.Memory == "" {
-		missingFields = append(missingFields, "memory")
-	}
-	if len(s.PortMap) == 0 {
-		missingFields = append(missingFields, "portMap")
-	}
-
-	return missingFields
+type EcsEngine struct {
+	Image   string `json:"image"`
+	Cpu     string `json:"cpu"`
+	Memory  string `json:"memory"`
+	Storage int32  `json:"storage"`
 }
 
-// Custom JSON unmarshaler for the ServerSpec type.
+type Ec2Engine struct {
+	Ami          string `json:"ami"`
+	InstanceType string `json:"instanceType"`
+	Storage      int32  `json:"storage"`
+}
+
+// Custom JSON unmarshaler for the ServerSpec type
 func (s *ServerSpec) UnmarshalJSON(data []byte) error {
 	type Alias ServerSpec
 	aux := &struct {
-		Storage *int32 `json:"storage"`
+		Engine json.RawMessage `json:"engine"`
 		*Alias
 	}{
 		Alias: (*Alias)(s),
@@ -131,13 +131,99 @@ func (s *ServerSpec) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	if aux.Storage == nil {
-		s.Storage = 21 // Minimal default value for Storage
-	} else {
-		s.Storage = *aux.Storage
+	switch aux.EngineType {
+	case EcsEngineType:
+		s.Engine = &EcsEngine{}
+	case Ec2EngineType:
+		s.Engine = &Ec2Engine{}
+	default:
+		return fmt.Errorf("unknown engine type: %s", aux.EngineType)
+	}
+
+	return json.Unmarshal(aux.Engine, s.Engine)
+}
+
+// Custom DynamoDB unmarshaler for the ServerSpec type
+func (s *ServerSpec) UnmarshalDynamoDBAttributeValue(av dynamodbTypes.AttributeValue) error {
+	type Alias ServerSpec
+	aux := &struct {
+		Engine any
+		*Alias
+	}{
+		Alias: (*Alias)(s),
+	}
+
+	if err := attributevalue.Unmarshal(av, &aux); err != nil {
+		return err
+	}
+
+	switch aux.EngineType {
+	case EcsEngineType:
+		s.Engine = &EcsEngine{}
+	case Ec2EngineType:
+		s.Engine = &Ec2Engine{}
+	default:
+		// Silently return to handle empty AttributeValue
+		return nil
+	}
+
+	avM := av.(*dynamodbTypes.AttributeValueMemberM)
+	engineAv, ok := avM.Value["Engine"]
+	if !ok {
+		// Silently return to handle empty AttributeValue
+		return nil
+	}
+
+	if err := attributevalue.Unmarshal(engineAv, &s.Engine); err != nil {
+		return err
 	}
 
 	return nil
+}
+
+// MissingField returns a list of required ServerSpec fields
+func (s ServerSpec) MissingField() []string {
+	missingFields := []string{}
+	if s.Name == "" {
+		missingFields = append(missingFields, "name")
+	}
+	if len(s.PortMap) == 0 {
+		missingFields = append(missingFields, "portMap")
+	}
+
+	if s.Engine != nil {
+		missingFields = append(missingFields, s.Engine.MissingField()...)
+	}
+
+	return missingFields
+}
+
+// MissingField returns a list of required ServerSpec fields
+func (e EcsEngine) MissingField() []string {
+	missingFields := []string{}
+	if e.Image == "" {
+		missingFields = append(missingFields, "image")
+	}
+	if e.Cpu == "" {
+		missingFields = append(missingFields, "cpu")
+	}
+	if e.Memory == "" {
+		missingFields = append(missingFields, "memory")
+	}
+
+	return missingFields
+}
+
+// MissingField returns a list of required ServerSpec fields
+func (e Ec2Engine) MissingField() []string {
+	missingFields := []string{}
+	if e.Ami == "" {
+		missingFields = append(missingFields, "image")
+	}
+	if e.InstanceType == "" {
+		missingFields = append(missingFields, "cpu")
+	}
+	return missingFields
 }
 
 // OpenPorts returns a string representation of ServerSpec ports
@@ -155,7 +241,7 @@ func (s ServerSpec) OpenPorts() []string {
 
 // AwsEnvSpec returns a []*ecs.KeyValuePair representation of
 // the ServerSpec environment variables
-func (s *ServerSpec) AwsEnvSpec() []ecsTypes.KeyValuePair {
+func (s ServerSpec) AwsEnvSpec() []ecsTypes.KeyValuePair {
 	envArray := make([]ecsTypes.KeyValuePair, len(s.EnvMap))
 	idx := 0
 	for k, v := range s.EnvMap {
@@ -167,7 +253,7 @@ func (s *ServerSpec) AwsEnvSpec() []ecsTypes.KeyValuePair {
 
 // AwsPortSpec returns a []*ecs.PortMapping representation of
 // the ServerSpec ports
-func (s *ServerSpec) AwsPortSpec() []ecsTypes.PortMapping {
+func (s ServerSpec) AwsPortSpec() []ecsTypes.PortMapping {
 	portArray := make([]ecsTypes.PortMapping, len(s.PortMap))
 	idx := 0
 	for portStr, protocolStr := range s.PortMap {
@@ -190,7 +276,7 @@ func (s *ServerSpec) AwsPortSpec() []ecsTypes.PortMapping {
 
 // AwsIpPermissionSpec returns a []*ec2.IpPermission representation of
 // the ServerSpec ports and protocols
-func (s *ServerSpec) AwsIpPermissionSpec() []ec2Types.IpPermission {
+func (s ServerSpec) AwsIpPermissionSpec() []ec2Types.IpPermission {
 	permissions := make([]ec2Types.IpPermission, len(s.PortMap))
 	idx := 0
 	for portStr, protocol := range s.PortMap {
@@ -211,32 +297,32 @@ func (s *ServerSpec) AwsIpPermissionSpec() []ec2Types.IpPermission {
 //===== Section: GuildConf
 
 type GuildConf struct {
-	GuildID           string `json:"key" dynamodbav:"key"`
-	ChannelCategoryID string `json:"channelCategory" dynamodbav:"channelCategory"`
-	AdminChannelID    string `json:"adminChannel" dynamodbav:"adminChannel"`
-	WelcomeChannelID  string `json:"welcomeChannel" dynamodbav:"welcomeChannel"`
-	AdminRoleID       string `json:"adminRole" dynamodbav:"adminRole"`
-	UserRoleID        string `json:"userRole" dynamodbav:"userRole"`
+	GuildID           string `dynamodbav:"key"`
+	ChannelCategoryID string
+	AdminChannelID    string
+	WelcomeChannelID  string
+	AdminRoleID       string
+	UserRoleID        string
 }
 
 //===== Section: Server
 
 type Server struct {
-	ChannelID  string `json:"key" dynamodbav:"key"`
-	GuildID    string `json:"guildID" dynamodbav:"guildID"`
-	Name       string `json:"name" dynamodbav:"name"`
-	SpecName   string `json:"specName" dynamodbav:"specName"`
-	TaskFamily string `json:"taskFamily" dynamodbav:"taskFamily"`
+	ChannelID  string `dynamodbav:"key"`
+	GuildID    string
+	Name       string
+	SpecName   string
+	TaskFamily string
 }
 
 //===== Section: Instace
 
 type Instance struct {
-	EngineID        string `json:"key" dynamodbav:"key"`
-	ThreadID        string `json:"threadID" dynamodbav:"threadID"`
-	ServerName      string `json:"serverName" dynamodbav:"serverName"`
-	ServerChannelID string `json:"serverChannelID" dynamodbav:"serverChannelID"`
-	OpenPorts       string `json:"openPorts" dynamodbav:"openPorts"`
+	EngineID        string `dynamodbav:"key"`
+	ThreadID        string
+	ServerName      string
+	ServerChannelID string
+	OpenPorts       string
 }
 
 //===== Section: ECS task status
