@@ -337,37 +337,15 @@ func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGate
 func (bot Frontend) gameRegisterFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 
-	// Get command arguments
 	args := internal.RegisterGameArgs{}
-	for _, opt := range acd.Options {
-		if opt.Name == internal.RegisterGameAPISpecUrlOpt {
-			args.SpecUrl = opt.StringValue()
-		} else if opt.Name == internal.RegisterGameAPIOverwriteOpt {
-			args.Overwrite = opt.BoolValue()
-		} else {
-			bot.Logger.Error("unknown option", zap.String("opt", opt.Name))
-			return bot.reply("🚫 Internal error")
-		}
+
+	// Get command arguments
+	if len(acd.Options) > 0 {
+		args.Overwrite = acd.Options[0].BoolValue()
 	}
 
-	if args.SpecUrl == "" {
-		// We don't have a spec url: reply with a modal (frontloop)
-		cmd := internal.BackendCmd{Args: &args}
-		return bot.textPrompt(cmd, "Register new game", "Paste LSDC2 json spec", `{"key": "gamename", "image": "repo/image:tag" ... }`)
-	} else {
-		// We have a spec url: directly call the backend (skip frontloop)
-		cmd := internal.BackendCmd{
-			AppID: itn.AppID,
-			Token: itn.Token,
-			Args:  &args,
-		}
-
-		if err := bot.callBackend(cmd); err != nil {
-			bot.Logger.Error("error in requestGameRegister", zap.String("culprit", "callBackend"), zap.Error(err))
-			return bot.reply("🚫 Internal error")
-		}
-		return bot.ackMessage()
-	}
+	cmd := internal.BackendCmd{Args: &args}
+	return bot.textPrompt(cmd, "Register new game", "Paste LSDC2 json spec", `{"key": "gamename", "image": "repo/image:tag" ... }`)
 }
 
 // welcomeGuildFrontloop is the first function triggered by a guild welcoming

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"slices"
 
 	"github.com/meuna/lsdc2-discord-bot/internal"
@@ -255,30 +253,12 @@ func (bot Backend) _getSpec(args internal.RegisterGameArgs) (spec internal.Serve
 	var jsonSpec []byte
 
 	// Dispatch spec source: args.SpecUrl / args.Spec
-	if len(args.SpecUrl) > 0 {
-		var resp *http.Response
-
-		// Spec is in args.SpecUrl
-		bot.Logger.Debug("registerting: spec download", zap.String("specUrl", args.SpecUrl))
-		resp, err = http.Get(args.SpecUrl)
-		if err != nil {
-			err = fmt.Errorf("http.Get / %w", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		jsonSpec, err = io.ReadAll(resp.Body)
-		if err != nil {
-			err = fmt.Errorf("io.ReadAll / %w", err)
-			return
-		}
-	} else if len(args.Spec) > 0 {
-		// Spec is in args.Spec
-		jsonSpec = []byte(args.Spec)
-	} else {
-		err = fmt.Errorf("both spec inputs are empty")
+	if len(args.Spec) == 0 {
+		err = fmt.Errorf("spec is empty")
 		return
+
 	}
+	jsonSpec = []byte(args.Spec)
 
 	// Parse spec
 	bot.Logger.Debug("registerting: parse spec")

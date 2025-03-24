@@ -125,7 +125,6 @@ func (cmd BackendCmd) MarshalJSON() ([]byte, error) {
 }
 
 type RegisterGameArgs struct {
-	SpecUrl   string `json:",omitempty"`
 	Spec      string `json:",omitempty"`
 	Overwrite bool
 }

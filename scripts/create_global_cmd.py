@@ -49,11 +49,6 @@ json_registergame = {
     "default_member_permissions": ADMINISTRATOR_PERM,
     "options": [
         {
-            "type": OPT_STRING,
-            "name": "spec-url",
-            "description": "Url to LSDC2-compatible game description",
-        },
-        {
             "type": OPT_BOOL,
             "name": "overwrite",
             "description": "If true, overwrite any existing spec",
