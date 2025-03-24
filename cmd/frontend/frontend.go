@@ -208,7 +208,7 @@ func (bot Frontend) checkDiscordSignature(request events.LambdaFunctionURLReques
 // appropriate handler based on the command name.
 func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.LambdaFunctionURLRequest) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
-	bot.Logger.Debug("routing command", zap.String("cmd", acd.Name))
+	bot.Logger.Debug("routing command", zap.Any("acd", acd))
 
 	switch acd.Name {
 	case internal.RegisterGameAPI:
@@ -255,7 +255,7 @@ func (bot Frontend) routeMessageComponent(itn discordgo.Interaction) (events.API
 		bot.reply("🚫 Internal error")
 	}
 
-	bot.Logger.Debug("routing message component", zap.String("action", cmd.Api))
+	bot.Logger.Debug("routing message component", zap.String("Api", cmd.Api))
 
 	// No Message Component implemented yet
 	switch cmd.Api {
@@ -277,7 +277,7 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 		bot.reply("🚫 Internal error")
 	}
 
-	bot.Logger.Debug("routing modal", zap.String("action", cmd.Api))
+	bot.Logger.Debug("routing modal", zap.String("Api", cmd.Api))
 
 	switch cmd.Api {
 	case internal.WelcomeAPI:
@@ -302,7 +302,7 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 // to the appropriate handler based on command name.
 func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
-	bot.Logger.Debug("routing autocomplete", zap.String("cmd", acd.Name))
+	bot.Logger.Debug("routing autocomplete", zap.Any("acd", acd))
 
 	switch acd.Name {
 	case internal.SpinupAPI:
