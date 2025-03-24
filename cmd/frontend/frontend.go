@@ -491,7 +491,7 @@ func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (event
 	serverName := acd.Options[0].StringValue()
 
 	// Retrieve the chanel ID
-	srv, err := internal.DynamodbScanFindFirst[internal.Server](bot.ServerTable, "name", serverName)
+	srv, err := internal.DynamodbScanFindFirst[internal.Server](bot.ServerTable, "Name", serverName)
 	if err != nil {
 		bot.Logger.Error("error in confirmServerDestruction", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -720,7 +720,7 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	}
 
 	// Check if the server is already running
-	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "serverName", srv.Name)
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerName", srv.Name)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -789,7 +789,7 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 //  2. Verifies that the task is not already stop.
 //  3. If not, issues the stop request.
 func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse, error) {
-	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "serverChannelID", channelID)
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerChannelID", channelID)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -821,7 +821,7 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 // serverStatus retrieves the status of the server associated with the
 // given channel ID.
 func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyResponse, error) {
-	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "serverChannelID", channelID)
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerChannelID", channelID)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return bot.reply("🚫 Internal error")

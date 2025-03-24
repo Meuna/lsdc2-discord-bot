@@ -254,6 +254,7 @@ func ecsTags() []ecsTypes.Tag {
 //   - stack: The stack configuration containing task role ARN, execution
 //     role ARN, and log group.
 func RegisterTask(region string, srvName string, spec ServerSpec, stack Lsdc2Stack) error {
+	ecsSpec := spec.Engine.(*EcsEngine)
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return err
@@ -263,9 +264,8 @@ func RegisterTask(region string, srvName string, spec ServerSpec, stack Lsdc2Sta
 	input := &ecs.RegisterTaskDefinitionInput{
 		Tags:                    ecsTags(),
 		Family:                  aws.String(srvName),
-		Cpu:                     aws.String(spec.Cpu),
-		Memory:                  aws.String(spec.Memory),
-		EphemeralStorage:        &ecsTypes.EphemeralStorage{SizeInGiB: spec.Storage},
+		Cpu:                     aws.String(ecsSpec.Cpu),
+		Memory:                  aws.String(ecsSpec.Memory),
 		NetworkMode:             ecsTypes.NetworkModeAwsvpc,
 		TaskRoleArn:             aws.String(stack.TaskRoleArn),
 		ExecutionRoleArn:        aws.String(stack.ExecutionRoleArn),
@@ -277,7 +277,7 @@ func RegisterTask(region string, srvName string, spec ServerSpec, stack Lsdc2Sta
 		ContainerDefinitions: []ecsTypes.ContainerDefinition{
 			{
 				Essential:    aws.Bool(true),
-				Image:        aws.String(spec.Image),
+				Image:        aws.String(ecsSpec.Image),
 				Name:         aws.String(spec.Name + "_container"),
 				Environment:  spec.AwsEnvSpec(),
 				PortMappings: spec.AwsPortSpec(),
@@ -291,6 +291,9 @@ func RegisterTask(region string, srvName string, spec ServerSpec, stack Lsdc2Sta
 				},
 			},
 		},
+	}
+	if ecsSpec.Storage > 0 {
+		input.EphemeralStorage = &ecsTypes.EphemeralStorage{SizeInGiB: max(21, ecsSpec.Storage)}
 	}
 	_, err = client.RegisterTaskDefinition(context.TODO(), input)
 
