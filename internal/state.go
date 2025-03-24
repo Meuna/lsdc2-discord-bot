@@ -221,7 +221,7 @@ func (e Ec2Engine) MissingField() []string {
 		missingFields = append(missingFields, "image")
 	}
 	if e.InstanceType == "" {
-		missingFields = append(missingFields, "cpu")
+		missingFields = append(missingFields, "instanceType")
 	}
 	return missingFields
 }
