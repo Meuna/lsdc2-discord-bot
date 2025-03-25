@@ -14,7 +14,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
-	ecsType "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	ec2Types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	ecsTypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/bwmarrin/discordgo"
 )
 
@@ -65,11 +66,12 @@ type Backend struct {
 // them based on the event type.
 func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
 	bot.Logger.Info("received CloudWatch event", zap.String("detailType", event.DetailType))
-	bot.Logger.Debug("CloudWatch event", zap.Any("event", event))
 
 	switch event.DetailType {
 	case "ECS Task State Change":
 		bot.notifyEcsUpdate(event)
+	case "EC2 Instance State-change Notification":
+		bot.notifyEc2Update(event)
 	default:
 		bot.Logger.Error("event not handled", zap.String("event", event.DetailType))
 	}
@@ -79,10 +81,13 @@ func (bot Backend) handleCloudWatchEvent(event events.CloudWatchEvent) {
 // and sends appropriate messages based on the task status.
 func (bot Backend) notifyEcsUpdate(event events.CloudWatchEvent) {
 	bot.Logger.Debug("received ECS task state event", zap.Any("event", event))
-	task := ecsType.Task{}
-	json.Unmarshal(event.Detail, &task)
+	task := ecsTypes.Task{}
+	if err := json.Unmarshal(event.Detail, &task); err != nil {
+		bot.Logger.Error("error in notifyEcsUpdate", zap.String("culprit", "Unmarshal"), zap.Error(err))
+		return
+	}
 
-	// Retrieve instance thread
+	// Retrieve instance
 	inst := internal.Instance{}
 	err := internal.DynamodbGetItem(bot.InstanceTable, *task.TaskArn, &inst)
 	if err != nil {
@@ -91,26 +96,84 @@ func (bot Backend) notifyEcsUpdate(event events.CloudWatchEvent) {
 	}
 
 	// Send a message depending on the task status
-	switch internal.GetTaskStatus(&task) {
-	case internal.TaskStarting:
+	switch internal.GetEcsTaskState(task) {
+	case internal.InstanceStateStarting:
 		bot.message(inst.ThreadID, "📢 Task state: %s", *task.LastStatus)
-	case internal.TaskRunning:
+	case internal.InstanceStateRunning:
 		// Get running details: IP
-		ip, err := internal.GetTaskIP(&task)
+		ip, err := internal.GetEcsTaskIP(task)
 		if err != nil {
+			bot.Logger.Error("error in notifyEcsUpdate", zap.String("culprit", "GetEcsTaskIP"), zap.Error(err))
 			ip = "error retrieving ip"
 		}
 		// Message with everything needed to connect
 		bot.renameChannel(inst.ThreadID, "🟢 Instance online: %s", ip)
 		bot.message(inst.ThreadID, "✅ Instance online ! ```%s```Open ports: %s", ip, inst.OpenPorts)
-	case internal.TaskStopping:
+	case internal.InstanceStateStopping:
 		bot.message(inst.ThreadID, "📢 Task is going offline: %s", *task.LastStatus)
-	case internal.TaskStopped:
+	case internal.InstanceStateStopped:
 		bot.renameChannel(inst.ThreadID, "🔴 Instance offline")
 		bot.message(inst.ThreadID, "📢 Task is offline")
 		bot.Logger.Info("notify: instance is down, remove instance DB entry", zap.String("EngineID", inst.EngineID))
-		if err = internal.DynamodbDeleteItem(bot.InstanceTable, inst.EngineID); err != nil {
-			bot.Logger.Error("error in stopServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
+		if err := inst.DeregisterTaskFamily(bot.BotEnv); err != nil {
+			bot.Logger.Error("error in notifyEcsUpdate", zap.String("culprit", "DeregisterTaskFamily"), zap.Error(err))
+		}
+		if err := internal.DynamodbDeleteItem(bot.InstanceTable, inst.EngineID); err != nil {
+			bot.Logger.Error("error in notifyEcsUpdate", zap.String("culprit", "DynamodbDeleteItem"), zap.Error(err))
+			return
+		}
+	}
+}
+
+// notifyEc2Update handles the notification of EC2 task state updates
+func (bot Backend) notifyEc2Update(event events.CloudWatchEvent) {
+	bot.Logger.Debug("received EC2 task state event", zap.Any("event", event))
+
+	// Parse details
+	details := struct {
+		InstanceId string                     `json:"instance-id"`
+		State      ec2Types.InstanceStateName `json:"state"`
+	}{}
+	if err := json.Unmarshal(event.Detail, &details); err != nil {
+		bot.Logger.Error("error in notifyEc2Update", zap.String("culprit", "Unmarshal"), zap.Error(err))
+		return
+	}
+
+	// Retrieve instance
+	inst := internal.Instance{}
+	if err := internal.DynamodbGetItem(bot.InstanceTable, details.InstanceId, &inst); err != nil {
+		bot.Logger.Error("error in notifyEc2Update", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		return
+	}
+
+	// Send a message depending on the task status
+	switch internal.GetEc2InstanceState(details.State) {
+	case internal.InstanceStateStarting:
+		bot.message(inst.ThreadID, "📢 VM state: %s", details.State)
+	case internal.InstanceStateRunning:
+		// Get running details: IP
+		vm, err := internal.DescribeInstance(details.InstanceId)
+		var ip string
+		if err != nil {
+			bot.Logger.Error("error in notifyEc2Update", zap.String("culprit", "DescribeInstance"), zap.Error(err))
+			ip = "error retrieving ip"
+		} else {
+			ip = *vm.PublicIpAddress
+		}
+		// Message with everything needed to connect
+		bot.renameChannel(inst.ThreadID, "🟢 Instance online: %s", ip)
+		bot.message(inst.ThreadID, "✅ Instance online ! ```%s```Open ports: %s", ip, inst.OpenPorts)
+	case internal.InstanceStateStopping:
+		bot.message(inst.ThreadID, "📢 VM is going offline: %s", details.State)
+	case internal.InstanceStateStopped:
+		bot.renameChannel(inst.ThreadID, "🔴 Instance offline")
+		bot.message(inst.ThreadID, "📢 VM is offline")
+		bot.Logger.Info("notify: instance is down, remove instance DB entry", zap.String("EngineID", inst.EngineID))
+		if err := inst.DeregisterTaskFamily(bot.BotEnv); err != nil {
+			bot.Logger.Error("error in notifyEc2Update", zap.String("culprit", "DeregisterTaskFamily"), zap.Error(err))
+		}
+		if err := internal.DynamodbDeleteItem(bot.InstanceTable, inst.EngineID); err != nil {
+			bot.Logger.Error("error in notifyEc2Update", zap.String("culprit", "DynamodbDeleteItem"), zap.Error(err))
 			return
 		}
 	}
@@ -284,8 +347,8 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 		return
 	}
 
+	// Pick a unique server name
 	srvName := fmt.Sprintf("%s-%d", args.GameName, spec.ServerCount)
-	taskFamily := fmt.Sprintf("lsdc2-%s-%s", args.GuildID, srvName)
 
 	// Create server channel
 	chanID, err := bot._createServerChannel(cmd, args, srvName)
@@ -295,26 +358,25 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Register ECS task definition
-	bot.Logger.Debug("spinupServer: register ECS task",
-		zap.String("taskFamily", taskFamily),
-		zap.String("srvName", srvName),
-		zap.Any("env", args.Env),
-	)
-	if err = bot._registerTask(taskFamily, srvName, spec, args.Env); err != nil {
-		bot.Logger.Error("error in spinupServer", zap.String("culprit", "_registerTask"), zap.Error(err))
-		bot.followUp(cmd, "🚫 Internal error")
-		return
+	// Create the server struct
+	srv := internal.Server{
+		GuildID:   args.GuildID,
+		Name:      srvName,
+		SpecName:  spec.Name,
+		ChannelID: chanID,
 	}
 
-	// And register server in db
-	srv := internal.Server{
-		GuildID:    args.GuildID,
-		Name:       srvName,
-		SpecName:   spec.Name,
-		ChannelID:  chanID,
-		TaskFamily: taskFamily,
+	srv.EnvMap = map[string]string{}
+	if spec.EnvMap != nil {
+		maps.Copy(srv.EnvMap, spec.EnvMap)
 	}
+	srv.EnvMap["LSDC2_BUCKET"] = bot.Bucket
+	srv.EnvMap["LSDC2_INSTANCE"] = srv.Name // FIXME: remove when serverwrap is fully updated
+	srv.EnvMap["LSDC2_SERVER"] = srv.Name
+	srv.EnvMap["LSDC2_QUEUE_URL"] = bot.QueueUrl
+	maps.Copy(spec.EnvMap, args.Env)
+
+	// And register server in db
 	bot.Logger.Debug("spinupServer: register server", zap.Any("srv", srv))
 	if err = internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
@@ -405,18 +467,6 @@ func (bot Backend) _createServerChannel(cmd internal.BackendCmd, args internal.S
 	return
 }
 
-func (bot Backend) _registerTask(taskFamily string, srvName string, spec internal.ServerSpec, confEnv map[string]string) error {
-	if spec.EnvMap == nil {
-		spec.EnvMap = map[string]string{}
-	}
-	spec.EnvMap["LSDC2_BUCKET"] = bot.Bucket
-	spec.EnvMap["LSDC2_INSTANCE"] = srvName // FIXME: remove when serverwrap is fully updated
-	spec.EnvMap["LSDC2_SERVER"] = srvName
-	spec.EnvMap["LSDC2_QUEUE_URL"] = bot.QueueUrl
-	maps.Copy(spec.EnvMap, confEnv)
-	return internal.RegisterTask(bot.AwsRegion, taskFamily, spec, bot.Lsdc2Stack)
-}
-
 //===== Section: server conf
 
 // confServer handles the configuration of an existing server.
@@ -442,15 +492,20 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	// ECS task revisions
-	bot.Logger.Debug("confServer: update ECS task",
-		zap.String("TaskFamily", srv.TaskFamily),
-		zap.String("server", srv.Name),
-		zap.Any("spec", spec),
-		zap.Any("env", args.Env),
-	)
-	if err = bot._registerTask(srv.TaskFamily, srv.Name, spec, args.Env); err != nil {
-		bot.Logger.Error("error in confServer", zap.String("culprit", "RegisterTask"), zap.Error(err))
+	// Reset server env
+	srv.EnvMap = map[string]string{}
+	if spec.EnvMap != nil {
+		maps.Copy(srv.EnvMap, spec.EnvMap)
+	}
+	srv.EnvMap["LSDC2_BUCKET"] = bot.Bucket
+	srv.EnvMap["LSDC2_INSTANCE"] = srv.Name // FIXME: remove when serverwrap is fully updated
+	srv.EnvMap["LSDC2_SERVER"] = srv.Name
+	srv.EnvMap["LSDC2_QUEUE_URL"] = bot.QueueUrl
+	maps.Copy(spec.EnvMap, args.Env)
+
+	bot.Logger.Debug("confServer: update server entry", zap.Any("srv", srv))
+	if err = internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
+		bot.Logger.Error("error in spinupServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -483,18 +538,15 @@ func (bot Backend) destroyServer(cmd internal.BackendCmd) {
 		return
 	}
 	if inst.EngineID != "" {
-		task, err := internal.DescribeTask(inst.EngineID, bot.Lsdc2Stack.Cluster)
+		instanceState, err := inst.GetState(bot.Lsdc2Stack.EcsClusterName)
 		if err != nil {
-			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
+			bot.Logger.Error("error in startServer", zap.String("culprit", "GetState"), zap.Error(err))
 			bot.followUp(cmd, "🚫 Internal error")
 			return
 		}
-		if task != nil {
-			taskStatus := internal.GetTaskStatus(task)
-			if taskStatus != internal.TaskStopped {
-				bot.followUp(cmd, "⚠️ The server is running. Please turn it off and try again")
-				return
-			}
+		if instanceState != internal.InstanceStateStopped {
+			bot.followUp(cmd, "⚠️ The server is running. Please turn it off and try again")
+			return
 		}
 	}
 
@@ -516,11 +568,6 @@ func (bot Backend) _destroyServer(srv internal.Server) (err error) {
 	bot.Logger.Debug("destroy: delete channel", zap.String("channelID", srv.ChannelID))
 	if _, err = sess.ChannelDelete(srv.ChannelID); err != nil {
 		return fmt.Errorf("ChannelDelete / %w", err)
-	}
-
-	bot.Logger.Debug("destroy: unregister task", zap.String("TaskFamily", srv.TaskFamily))
-	if err = internal.DeregisterTaskFamily(srv.TaskFamily); err != nil {
-		return fmt.Errorf("DeregisterTaskFamiliy / %w", err)
 	}
 
 	bot.Logger.Debug("destroy: unregister server", zap.String("channelID", srv.ChannelID))

@@ -2,8 +2,11 @@ package internal
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -244,7 +247,7 @@ func ecsTags() []ecsTypes.Tag {
 	}
 }
 
-// RegisterTask registers a new ECS task definition with the specified parameters.
+// RegisterTaskFamily registers a new ECS task definition with the specified parameters.
 //
 // Parameters:
 //   - region: The AWS region.
@@ -253,7 +256,7 @@ func ecsTags() []ecsTypes.Tag {
 //     environment variables, and port mappings.
 //   - stack: The stack configuration containing task role ARN, execution
 //     role ARN, and log group.
-func RegisterTask(region string, srvName string, spec ServerSpec, stack Lsdc2Stack) error {
+func RegisterTaskFamily(stack Lsdc2Stack, spec ServerSpec, env map[string]string, taskFamily string) error {
 	ecsSpec := spec.Engine.(*EcsEngine)
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -261,14 +264,21 @@ func RegisterTask(region string, srvName string, spec ServerSpec, stack Lsdc2Sta
 	}
 	client := ecs.NewFromConfig(cfg)
 
+	envArray := make([]ecsTypes.KeyValuePair, len(env))
+	idx := 0
+	for k, v := range env {
+		envArray[idx] = ecsTypes.KeyValuePair{Name: aws.String(k), Value: aws.String(v)}
+		idx = idx + 1
+	}
+
 	input := &ecs.RegisterTaskDefinitionInput{
 		Tags:                    ecsTags(),
-		Family:                  aws.String(srvName),
+		Family:                  aws.String(taskFamily),
 		Cpu:                     aws.String(ecsSpec.Cpu),
 		Memory:                  aws.String(ecsSpec.Memory),
 		NetworkMode:             ecsTypes.NetworkModeAwsvpc,
-		TaskRoleArn:             aws.String(stack.TaskRoleArn),
-		ExecutionRoleArn:        aws.String(stack.ExecutionRoleArn),
+		TaskRoleArn:             aws.String(stack.EcsTaskRoleArn),
+		ExecutionRoleArn:        aws.String(stack.EcsExecutionRoleArn),
 		RequiresCompatibilities: []ecsTypes.Compatibility{ecsTypes.CompatibilityFargate},
 		RuntimePlatform: &ecsTypes.RuntimePlatform{
 			CpuArchitecture:       ecsTypes.CPUArchitectureX8664,
@@ -279,13 +289,13 @@ func RegisterTask(region string, srvName string, spec ServerSpec, stack Lsdc2Sta
 				Essential:    aws.Bool(true),
 				Image:        aws.String(ecsSpec.Image),
 				Name:         aws.String(spec.Name + "_container"),
-				Environment:  spec.AwsEnvSpec(),
+				Environment:  envArray,
 				PortMappings: spec.AwsPortSpec(),
 				LogConfiguration: &ecsTypes.LogConfiguration{
 					LogDriver: ecsTypes.LogDriverAwslogs,
 					Options: map[string]string{
 						"awslogs-group":         stack.LogGroup,
-						"awslogs-region":        region,
+						"awslogs-region":        stack.AwsRegion,
 						"awslogs-stream-prefix": "ecs",
 					},
 				},
@@ -293,7 +303,7 @@ func RegisterTask(region string, srvName string, spec ServerSpec, stack Lsdc2Sta
 		},
 	}
 	if ecsSpec.Storage > 0 {
-		input.EphemeralStorage = &ecsTypes.EphemeralStorage{SizeInGiB: max(21, ecsSpec.Storage)}
+		input.EphemeralStorage = &ecsTypes.EphemeralStorage{SizeInGiB: min(max(21, ecsSpec.Storage), 200)}
 	}
 	_, err = client.RegisterTaskDefinition(context.TODO(), input)
 
@@ -327,9 +337,9 @@ func DeregisterTaskFamily(taskFamily string) error {
 	return err
 }
 
-// StartTask starts an ECS task for the provided family and security groupe.
+// StartEcsTask starts an ECS task for the provided family and security groupe.
 // Returns the ARN of the started task.
-func StartTask(stack Lsdc2Stack, taskFamily string, securityGroup string) (arn string, err error) {
+func StartEcsTask(stack Lsdc2Stack, spec ServerSpec, taskFamily string) (arn string, err error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return "", err
@@ -344,12 +354,12 @@ func StartTask(stack Lsdc2Stack, taskFamily string, securityGroup string) (arn s
 		CapacityProviderStrategy: []ecsTypes.CapacityProviderStrategyItem{
 			{CapacityProvider: aws.String("FARGATE_SPOT")},
 		},
-		Cluster: aws.String(stack.Cluster),
+		Cluster: aws.String(stack.EcsClusterName),
 		Count:   aws.Int32(1),
 		NetworkConfiguration: &ecsTypes.NetworkConfiguration{
 			AwsvpcConfiguration: &ecsTypes.AwsVpcConfiguration{
 				AssignPublicIp: ecsTypes.AssignPublicIpEnabled,
-				SecurityGroups: []string{securityGroup},
+				SecurityGroups: []string{spec.SecurityGroup},
 				Subnets:        subnets,
 			},
 		},
@@ -370,8 +380,8 @@ func StartTask(stack Lsdc2Stack, taskFamily string, securityGroup string) (arn s
 	return
 }
 
-// StopTask stops the provided ECS task
-func StopTask(taskArn string, clusterArn string) error {
+// StopEcsTask stops the provided ECS task
+func StopEcsTask(taskArn string, ecsCluster string) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return err
@@ -379,33 +389,72 @@ func StopTask(taskArn string, clusterArn string) error {
 	client := ecs.NewFromConfig(cfg)
 
 	_, err = client.StopTask(context.TODO(), &ecs.StopTaskInput{
-		Cluster: aws.String(clusterArn),
+		Cluster: aws.String(ecsCluster),
 		Task:    aws.String(taskArn),
 	})
 
 	return err
 }
 
-// DescribeTask retrieves the details of the provided ECS task. Returns a
-// pointer to the ECS task details.
-func DescribeTask(taskArn string, clusterArn string) (*ecsTypes.Task, error) {
+// DescribeTask retrieves the details of the provided ECS task
+func DescribeTask(taskArn string, ecsCluster string) (ecsTypes.Task, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		return nil, err
+		return ecsTypes.Task{}, err
 	}
 	client := ecs.NewFromConfig(cfg)
 
 	result, err := client.DescribeTasks(context.TODO(), &ecs.DescribeTasksInput{
-		Cluster: aws.String(clusterArn),
+		Cluster: aws.String(ecsCluster),
 		Tasks:   []string{taskArn},
 	})
 	if err != nil {
-		return nil, err
+		return ecsTypes.Task{}, err
 	}
 	if len(result.Tasks) == 0 {
-		return nil, nil
+		return ecsTypes.Task{}, nil
 	}
-	return &result.Tasks[0], nil
+	return result.Tasks[0], nil
+}
+
+// GetEcsTaskIP retrieves the public IP address of the ECS task's ENI
+func GetEcsTaskIP(task ecsTypes.Task) (string, error) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", err
+	}
+
+	// Get the ENI from the attachments
+	if len(task.Attachments) == 0 {
+		return "", errors.New("no ENI attached")
+	}
+	if *task.Attachments[0].Status != "ATTACHED" {
+		return "", errors.New("ENI not in ATTACHED state")
+	}
+	var eniID string
+	for _, kv := range task.Attachments[0].Details {
+		if *kv.Name == "networkInterfaceId" {
+			eniID = *kv.Value
+			break
+		}
+	}
+
+	// Then describe IP from ENI
+	client := ec2.NewFromConfig(cfg)
+	resultDni, err := client.DescribeNetworkInterfaces(context.TODO(), &ec2.DescribeNetworkInterfacesInput{
+		NetworkInterfaceIds: []string{eniID},
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(resultDni.NetworkInterfaces) == 0 {
+		return "", errors.New("network interface description returned empty results")
+	}
+	if resultDni.NetworkInterfaces[0].Association == nil {
+		return "", errors.New("network interface association is empty")
+	}
+
+	return *resultDni.NetworkInterfaces[0].Association.PublicIp, nil
 }
 
 //===== Section: EC2
@@ -420,6 +469,119 @@ func ec2Tags(resourceType ec2Types.ResourceType) []ec2Types.TagSpecification {
 			},
 		},
 	}
+}
+
+// StartEc2VM starts a new EC2 instance for the provided server spec.
+// Returns the ID of the started instance.
+func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (instanceID string, err error) {
+	ec2Spec, ok := spec.Engine.(*Ec2Engine)
+	if !ok {
+		return "", errors.New("engine spec is not an EC2 engine")
+	}
+
+	// Build user data script
+	var builder strings.Builder
+	builder.WriteString("#!/bin/bash\n")
+	builder.WriteString("cat << EOF >> /lsdc2/lsdc2.env\n")
+	builder.WriteString(fmt.Sprintf("AWS_REGION=%s\n", stack.AwsRegion))
+	for key, value := range env {
+		builder.WriteString(fmt.Sprintf("%s=%s\n", key, value))
+	}
+	if os.Getenv("DEBUG") != "" {
+		builder.WriteString("DEBUG=1\n")
+	}
+	builder.WriteString("EOF\n")
+	builder.WriteString("systemctl start lsdc2.service\n")
+
+	userDataScript := builder.String()
+	userDatab64 := base64.StdEncoding.EncodeToString([]byte(userDataScript))
+
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", err
+	}
+	client := ec2.NewFromConfig(cfg)
+
+	input := &ec2.RunInstancesInput{
+		ImageId: aws.String(ec2Spec.Ami),
+		IamInstanceProfile: &ec2Types.IamInstanceProfileSpecification{
+			Arn: aws.String(stack.Ec2VMProfileArn),
+		},
+		InstanceMarketOptions: &ec2Types.InstanceMarketOptionsRequest{
+			MarketType: ec2Types.MarketTypeSpot,
+		},
+		InstanceType:      ec2Types.InstanceType(ec2Spec.InstanceType),
+		MaxCount:          aws.Int32(1),
+		MinCount:          aws.Int32(1),
+		SecurityGroupIds:  []string{spec.SecurityGroup},
+		SubnetId:          aws.String(stack.Subnets[0]), // FIXME: do something better
+		TagSpecifications: ec2Tags(ec2Types.ResourceTypeInstance),
+		UserData:          aws.String(userDatab64),
+	}
+	if ec2Spec.Storage > 0 {
+		input.BlockDeviceMappings = []ec2Types.BlockDeviceMapping{
+			{
+				DeviceName: aws.String("/dev/sda1"),
+				Ebs: &ec2Types.EbsBlockDevice{
+					VolumeSize: aws.Int32(min(max(8, ec2Spec.Storage), 200)),
+				},
+			},
+		}
+	}
+	result, err := client.RunInstances(context.TODO(), input)
+	if err != nil {
+		return "", err
+	}
+	if len(result.Instances) == 0 {
+		instanceID = ""
+		return "", errors.New("instance creation returned empty results")
+	}
+
+	instanceID = *result.Instances[0].InstanceId
+	err = nil
+	return
+}
+
+// SendCommand stops the specified EC2 instance
+func SendCommand(instanceID string, command string) error {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return err
+	}
+	client := ssm.NewFromConfig(cfg)
+
+	_, err = client.SendCommand(context.TODO(), &ssm.SendCommandInput{
+		DocumentName: aws.String("AWS-RunShellScript"),
+		InstanceIds:  []string{instanceID},
+		Parameters: map[string][]string{
+			"commands": {command},
+		},
+	})
+
+	return err
+}
+
+// DescribeInstance retrieves the details of the provided EC2 instance
+func DescribeInstance(instanceID string) (ec2Types.Instance, error) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return ec2Types.Instance{}, err
+	}
+	client := ec2.NewFromConfig(cfg)
+
+	result, err := client.DescribeInstances(context.TODO(), &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	})
+	if err != nil {
+		return ec2Types.Instance{}, err
+	}
+	if len(result.Reservations) == 0 {
+		return ec2Types.Instance{}, nil
+	}
+	if len(result.Reservations[0].Instances) == 0 {
+		return ec2Types.Instance{}, nil
+	}
+	return result.Reservations[0].Instances[0], nil
 }
 
 // CreateSecurityGroup creates a new security group in AWS EC2. The security
@@ -520,47 +682,6 @@ func DeleteSecurityGroup(groupID string) error {
 		GroupId: aws.String(groupID),
 	})
 	return err
-}
-
-// GetTaskIP retrieves the public IP address of an ECS task's ENI (Elastic
-// Network Interface)
-func GetTaskIP(task *ecsTypes.Task) (string, error) {
-	cfg, err := config.LoadDefaultConfig(context.TODO())
-	if err != nil {
-		return "", err
-	}
-	client := ec2.NewFromConfig(cfg)
-
-	// Get the ENI from the attachments
-	if len(task.Attachments) == 0 {
-		return "", errors.New("no ENI attached")
-	}
-	if *task.Attachments[0].Status != "ATTACHED" {
-		return "", errors.New("ENI not in ATTACHED state")
-	}
-	var eniID string
-	for _, kv := range task.Attachments[0].Details {
-		if *kv.Name == "networkInterfaceId" {
-			eniID = *kv.Value
-			break
-		}
-	}
-
-	// Then describe IP from ENI
-	resultDni, err := client.DescribeNetworkInterfaces(context.TODO(), &ec2.DescribeNetworkInterfacesInput{
-		NetworkInterfaceIds: []string{eniID},
-	})
-	if err != nil {
-		return "", err
-	}
-	if len(resultDni.NetworkInterfaces) == 0 {
-		return "", errors.New("network interface description returned empty results")
-	}
-	if resultDni.NetworkInterfaces[0].Association == nil {
-		return "", errors.New("network interface association is empty")
-	}
-
-	return *resultDni.NetworkInterfaces[0].Association.PublicIp, nil
 }
 
 //===== Section: S3
