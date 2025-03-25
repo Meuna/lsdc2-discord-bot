@@ -683,8 +683,9 @@ func (bot Frontend) memberKickCall(itn discordgo.Interaction) (events.APIGateway
 //  1. Retrieves the server details from DynamoDB.
 //  2. Verifies that the task is not already running or in the process of
 //     starting/stopping.
-//  3. Starts the server task if it is not already running.
-//  4. Updates the server with the new task ARN in DynamoDB.
+//  3. Create a dedicated discord thread.
+//  4. Starts the server task/instance if it is not already running.
+//  5. Add an instance entry in the db.
 func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyResponse, error) {
 	// Retrieve server details
 	srv := internal.Server{}
@@ -698,37 +699,27 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	}
 
 	// Check if the server is already running
-	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerName", srv.Name)
+	existingInst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerName", srv.Name)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
-	if inst.EngineID != "" {
-		task, err := internal.DescribeTask(inst.EngineID, bot.Lsdc2Stack.Cluster)
+	if existingInst.EngineID != "" {
+		instanceState, err := existingInst.GetState(bot.Lsdc2Stack.EcsClusterName)
 		if err != nil {
-			bot.Logger.Error("error in startServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
+			bot.Logger.Error("error in startServer", zap.String("culprit", "GetState"), zap.Error(err))
 			return bot.reply("🚫 Internal error")
 		}
-		if task != nil {
-			// Test for early return cases
-			switch internal.GetTaskStatus(task) {
-			case internal.TaskStopping:
-				return bot.reply("⚠️ Server is going offline. Please wait and try again")
-			case internal.TaskStarting:
-				return bot.reply("⚠️ Server is starting. Please wait a few minutes")
-			case internal.TaskRunning:
-				return bot.serverStatus(channelID)
-			}
-			// No match == we can start a server
+		// Test for early return cases
+		switch instanceState {
+		case internal.InstanceStateStopping:
+			return bot.reply("⚠️ Server is going offline. Please wait and try again")
+		case internal.InstanceStateStarting:
+			return bot.reply("⚠️ Server is starting. Please wait a few minutes")
+		case internal.InstanceStateRunning:
+			return bot.serverStatus(channelID)
 		}
-	}
-
-	// Get the game spec
-	spec := internal.ServerSpec{}
-	err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
-	if err != nil {
-		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
+		// No match == we can start a server
 	}
 
 	// Start a dedicated thread
@@ -740,20 +731,16 @@ func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyRespons
 	}
 
 	// Start the task
-	taskArn, err := internal.StartTask(bot.Lsdc2Stack, srv.TaskFamily, spec.SecurityGroup)
+	inst, err := srv.StartInstance(bot.BotEnv)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "StartTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
 
 	// Register the thread ID and task ARN in the instance entry
-	err = internal.DynamodbPutItem(bot.InstanceTable, internal.Instance{
-		EngineID:        taskArn,
-		ThreadID:        thread.ID,
-		ServerName:      srv.Name,
-		ServerChannelID: srv.ChannelID,
-		OpenPorts:       fmt.Sprintf("%s", spec.OpenPorts()),
-	})
+	inst.ThreadID = thread.ID
+	bot.Logger.Debug("startServer: persiste instance in db", zap.Any("inst", inst))
+	err = internal.DynamodbPutItem(bot.InstanceTable, inst)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -774,22 +761,24 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	}
 
 	// Check that the task is not already stopped
+	// TODO: ensure that stoping an EC2 instance while it start is safe.
+	// If not, only allow stoping if the instance is running
 	if inst.EngineID == "" {
 		return bot.reply("🟥 Server offline")
 	} else {
-		task, err := internal.DescribeTask(inst.EngineID, bot.Lsdc2Stack.Cluster)
+		instanceState, err := inst.GetState(bot.Lsdc2Stack.EcsClusterName)
 		if err != nil {
-			bot.Logger.Error("error in stopServer", zap.String("culprit", "DescribeTask"), zap.Error(err))
+			bot.Logger.Error("error in stopServer", zap.String("culprit", "GetState"), zap.Error(err))
 			return bot.reply("🚫 Internal error")
 		}
-		if task != nil && internal.GetTaskStatus(task) == internal.TaskStopped {
+		if instanceState == internal.InstanceStateStopped {
 			return bot.reply("🟥 Server offline")
 		}
 	}
 
 	// Issue the task stop request
-	bot.Logger.Debug("stoping: stop task", zap.String("channelID", channelID), zap.Any("instance", inst))
-	if err = internal.StopTask(inst.EngineID, bot.Lsdc2Stack.Cluster); err != nil {
+	bot.Logger.Debug("stoping: stop task", zap.Any("instance", inst))
+	if err = inst.StopInstance(bot.BotEnv); err != nil {
 		bot.Logger.Error("error in stopServer", zap.String("culprit", "StopTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
@@ -809,24 +798,24 @@ func (bot Frontend) serverStatus(channelID string) (events.APIGatewayProxyRespon
 	if inst.EngineID == "" {
 		return bot.reply("🟥 Server offline")
 	}
-	task, err := internal.DescribeTask(inst.EngineID, bot.Lsdc2Stack.Cluster)
+	instanceState, err := inst.GetState(bot.Lsdc2Stack.EcsClusterName)
 	if err != nil {
-		bot.Logger.Error("error in serverStatus", zap.String("culprit", "DescribeTask"), zap.Error(err))
+		bot.Logger.Error("error in serverStatus", zap.String("culprit", "GetState"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
 
 	// Status: changing
-	switch internal.GetTaskStatus(task) {
-	case internal.TaskStopped:
+	switch instanceState {
+	case internal.InstanceStateStopped:
 		return bot.reply("🟥 Server offline")
-	case internal.TaskStopping:
+	case internal.InstanceStateStopping:
 		return bot.reply("⚠️ Server is going offline")
-	case internal.TaskStarting:
+	case internal.InstanceStateStarting:
 		return bot.reply("⚠️ Server is starting. Please wait a few minutes")
 	}
 
 	// Status: online
-	ip, err := internal.GetTaskIP(task)
+	ip, err := inst.GetIP(bot.Lsdc2Stack.EcsClusterName)
 	if err != nil {
 		bot.Logger.Error("error in serverStatus", zap.String("culprit", "GetTaskIP"), zap.Error(err))
 		return bot.reply(":thinking: Public IP not available, contact administrator")

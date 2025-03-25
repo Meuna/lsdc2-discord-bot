@@ -26,20 +26,21 @@ type DiscordSecrets struct {
 }
 
 type Lsdc2Stack struct {
-	AwsRegion        string   `env:"AWS_REGION"`
-	DiscordParam     string   `env:"DISCORD_PARAM"`
-	QueueUrl         string   `env:"BOT_QUEUE_URL"`
-	Vpc              string   `env:"VPC"`
-	Subnets          []string `env:"SUBNETS" envSeparator:";"`
-	Cluster          string   `env:"CLUSTER"`
-	LogGroup         string   `env:"LOG_GROUP"`
-	Bucket           string   `env:"SAVEGAME_BUCKET"`
-	SpecTable        string   `env:"SPEC_TABLE"`
-	GuildTable       string   `env:"GUILD_TABLE"`
-	ServerTable      string   `env:"SERVER_TABLE"`
-	InstanceTable    string   `env:"INSTANCE_TABLE"`
-	ExecutionRoleArn string   `env:"EXECUTION_ROLE_ARN"`
-	TaskRoleArn      string   `env:"TASK_ROLE_ARN"`
+	AwsRegion           string   `env:"AWS_REGION"`
+	DiscordParam        string   `env:"DISCORD_PARAM"`
+	QueueUrl            string   `env:"BOT_QUEUE_URL"`
+	Vpc                 string   `env:"VPC"`
+	Subnets             []string `env:"SUBNETS" envSeparator:";"`
+	LogGroup            string   `env:"LOG_GROUP"`
+	Bucket              string   `env:"SAVEGAME_BUCKET"`
+	SpecTable           string   `env:"SPEC_TABLE"`
+	GuildTable          string   `env:"GUILD_TABLE"`
+	ServerTable         string   `env:"SERVER_TABLE"`
+	InstanceTable       string   `env:"INSTANCE_TABLE"`
+	EcsClusterName      string   `env:"ECS_CLUSTER_NAME"`
+	EcsExecutionRoleArn string   `env:"ECS_EXECUTION_ROLE_ARN"`
+	EcsTaskRoleArn      string   `env:"ECS_TASK_ROLE_ARN"`
+	Ec2VMProfileArn     string   `env:"EC2_VM_PROFILE_ARN"`
 }
 
 type BotEnv struct {
@@ -78,14 +79,57 @@ func InitBot() (BotEnv, error) {
 
 //===== Section: ServerSpec
 
+type EngineType string
+
+const (
+	EcsEngineType EngineType = "ecs"
+	Ec2EngineType EngineType = "ec2"
+)
+
 type Engine interface {
 	MissingField() []string
 }
 
-const (
-	EcsEngineType = "ecs"
-	Ec2EngineType = "ec2"
-)
+type EcsEngine struct {
+	Image   string `json:"image"`
+	Cpu     string `json:"cpu"`
+	Memory  string `json:"memory"`
+	Storage int32  `json:"storage"`
+}
+
+// MissingField returns a list of required ServerSpec fields
+func (e EcsEngine) MissingField() []string {
+	missingFields := []string{}
+	if e.Image == "" {
+		missingFields = append(missingFields, "image")
+	}
+	if e.Cpu == "" {
+		missingFields = append(missingFields, "cpu")
+	}
+	if e.Memory == "" {
+		missingFields = append(missingFields, "memory")
+	}
+
+	return missingFields
+}
+
+type Ec2Engine struct {
+	Ami          string `json:"ami"`
+	InstanceType string `json:"instanceType"`
+	Storage      int32  `json:"storage"`
+}
+
+// MissingField returns a list of required ServerSpec fields
+func (e Ec2Engine) MissingField() []string {
+	missingFields := []string{}
+	if e.Ami == "" {
+		missingFields = append(missingFields, "image")
+	}
+	if e.InstanceType == "" {
+		missingFields = append(missingFields, "instanceType")
+	}
+	return missingFields
+}
 
 // TODO: implement a PortAndProtocol struct in case ECS allow for udp+tcp port forward
 // type PortAndProtocol struct {
@@ -100,21 +144,8 @@ type ServerSpec struct {
 	EnvParamMap   map[string]string `json:"envParamMap"`
 	SecurityGroup string            `json:"securityGroup"`
 	ServerCount   int               `json:"severCount"`
-	EngineType    string            `json:"engineType"`
+	EngineType    EngineType        `json:"engineType"`
 	Engine        Engine            `json:"engine"`
-}
-
-type EcsEngine struct {
-	Image   string `json:"image"`
-	Cpu     string `json:"cpu"`
-	Memory  string `json:"memory"`
-	Storage int32  `json:"storage"`
-}
-
-type Ec2Engine struct {
-	Ami          string `json:"ami"`
-	InstanceType string `json:"instanceType"`
-	Storage      int32  `json:"storage"`
 }
 
 // Custom JSON unmarshaler for the ServerSpec type
@@ -195,34 +226,6 @@ func (s ServerSpec) MissingField() []string {
 		missingFields = append(missingFields, s.Engine.MissingField()...)
 	}
 
-	return missingFields
-}
-
-// MissingField returns a list of required ServerSpec fields
-func (e EcsEngine) MissingField() []string {
-	missingFields := []string{}
-	if e.Image == "" {
-		missingFields = append(missingFields, "image")
-	}
-	if e.Cpu == "" {
-		missingFields = append(missingFields, "cpu")
-	}
-	if e.Memory == "" {
-		missingFields = append(missingFields, "memory")
-	}
-
-	return missingFields
-}
-
-// MissingField returns a list of required ServerSpec fields
-func (e Ec2Engine) MissingField() []string {
-	missingFields := []string{}
-	if e.Ami == "" {
-		missingFields = append(missingFields, "image")
-	}
-	if e.InstanceType == "" {
-		missingFields = append(missingFields, "instanceType")
-	}
 	return missingFields
 }
 
@@ -308,42 +311,163 @@ type GuildConf struct {
 //===== Section: Server
 
 type Server struct {
-	ChannelID  string `dynamodbav:"key"`
-	GuildID    string
-	Name       string
-	SpecName   string
-	TaskFamily string
+	ChannelID string `dynamodbav:"key"`
+	GuildID   string
+	Name      string
+	SpecName  string
+	EnvMap    map[string]string
+}
+
+func (srv Server) StartInstance(bot BotEnv) (Instance, error) {
+	// Get the game spec
+	spec := ServerSpec{}
+	if err := DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec); err != nil {
+		return Instance{}, fmt.Errorf("StartTask / %w", err)
+	}
+
+	inst := Instance{
+		EngineType:      spec.EngineType,
+		ServerName:      srv.Name,
+		ServerChannelID: srv.ChannelID,
+		ServerGuildID:   srv.GuildID,
+		OpenPorts:       fmt.Sprintf("%s", spec.OpenPorts()),
+	}
+
+	if spec.EngineType == EcsEngineType {
+		taskFamily := taskFamily(srv.GuildID, srv.Name)
+		if err := RegisterTaskFamily(bot.Lsdc2Stack, spec, srv.EnvMap, taskFamily); err != nil {
+			return Instance{}, fmt.Errorf("RegisterTask / %w", err)
+		}
+		taskArn, err := StartEcsTask(bot.Lsdc2Stack, spec, taskFamily)
+		if err != nil {
+			return Instance{}, fmt.Errorf("StartEcsTask / %w", err)
+		}
+		inst.EngineID = taskArn
+	} else {
+		instanceID, err := StartEc2VM(bot.Lsdc2Stack, spec, srv.EnvMap)
+		if err != nil {
+			return Instance{}, fmt.Errorf("StartEc2Instance / %w", err)
+		}
+		inst.EngineID = instanceID
+	}
+	return inst, nil
+}
+
+func taskFamily(guildID string, serverName string) string {
+	return fmt.Sprintf("lsdc2-%s-%s", guildID, serverName)
 }
 
 //===== Section: Instace
 
 type Instance struct {
 	EngineID        string `dynamodbav:"key"`
+	EngineType      EngineType
 	ThreadID        string
 	ServerName      string
 	ServerChannelID string
+	ServerGuildID   string
 	OpenPorts       string
 }
 
-//===== Section: ECS task status
+func (inst Instance) StopInstance(bot BotEnv) error {
+	if inst.EngineType == EcsEngineType {
+		if err := StopEcsTask(inst.EngineID, bot.Lsdc2Stack.EcsClusterName); err != nil {
+			return fmt.Errorf("StopEcsTask / %w", err)
+		}
+		taskFamily := taskFamily(inst.ServerGuildID, inst.ServerName)
+		if err := DeregisterTaskFamily(taskFamily); err != nil {
+			return fmt.Errorf("DeregisterTaskFamily / %w", err)
+		}
+	} else {
+		err := SendCommand(inst.EngineID, "sudo systemctl stop lsdc2.service")
+		if err != nil {
+			return fmt.Errorf("StopEc2Instance / %w", err)
+		}
+	}
+	return nil
+}
+
+func (inst Instance) DeregisterTaskFamily(bot BotEnv) error {
+	taskFamily := taskFamily(inst.ServerGuildID, inst.ServerName)
+	return DeregisterTaskFamily(taskFamily)
+}
+
+type InstanceState string
 
 const (
-	TaskStopped = iota
-	TaskStopping
-	TaskStarting
-	TaskRunning
+	InstanceStateStopped  InstanceState = "stoped"
+	InstanceStateStopping InstanceState = "stoping"
+	InstanceStateStarting InstanceState = "starting"
+	InstanceStateRunning  InstanceState = "running"
 )
 
-// GetTaskStatus return a simplified ECS task lifecycle
+// GetState returns a simplified and unified EC2/ECS lifecycle
 // TaskStarting > TaskRunning > TaskStopping > TaskStopped
-func GetTaskStatus(task *ecsTypes.Task) int {
-	if (task == nil) || *task.LastStatus == string(ecsTypes.DesiredStatusStopped) {
-		return TaskStopped
-	} else if *task.DesiredStatus == string(ecsTypes.DesiredStatusStopped) {
-		return TaskStopping
-	} else if *task.LastStatus == string(ecsTypes.DesiredStatusRunning) {
-		return TaskRunning
+func (inst Instance) GetState(ecsCluster string) (InstanceState, error) {
+	var state InstanceState
+	if inst.EngineType == EcsEngineType {
+		task, err := DescribeTask(inst.EngineID, ecsCluster)
+		if err != nil {
+			return state, err
+		}
+		state = GetEcsTaskState(task)
 	} else {
-		return TaskStarting
+		vm, err := DescribeInstance(inst.EngineID)
+		if err != nil {
+			return state, err
+		}
+		state = GetEc2InstanceState(vm.State.Name)
 	}
+
+	return state, nil
+}
+
+// GetIP returns the IP of the instance
+func (inst Instance) GetIP(ecsCluster string) (string, error) {
+	if inst.EngineType == EcsEngineType {
+		task, err := DescribeTask(inst.EngineID, ecsCluster)
+		if err != nil {
+			return "", err
+		}
+		return GetEcsTaskIP(task)
+	} else {
+		vm, err := DescribeInstance(inst.EngineID)
+		if err != nil {
+			return "", err
+		}
+		return *vm.PublicIpAddress, nil
+	}
+}
+
+// GetEcsTaskState return the unified InstanceState of an ECS task
+func GetEcsTaskState(task ecsTypes.Task) InstanceState {
+	var state InstanceState
+	if *task.LastStatus == string(ecsTypes.DesiredStatusStopped) {
+		state = InstanceStateStopped
+	} else if *task.DesiredStatus == string(ecsTypes.DesiredStatusStopped) {
+		state = InstanceStateStopping
+	} else if *task.LastStatus == string(ecsTypes.DesiredStatusRunning) {
+		state = InstanceStateRunning
+	} else {
+		state = InstanceStateStarting
+	}
+
+	return state
+}
+
+// GetEcsTaskState return the unified InstanceState of an ECS task
+func GetEc2InstanceState(stateName ec2Types.InstanceStateName) InstanceState {
+	var state InstanceState
+	switch stateName {
+	case ec2Types.InstanceStateNameTerminated, ec2Types.InstanceStateNameStopped:
+		state = InstanceStateStopped
+	case ec2Types.InstanceStateNameStopping, ec2Types.InstanceStateNameShuttingDown:
+		state = InstanceStateStopping
+	case ec2Types.InstanceStateNameRunning:
+		state = InstanceStateRunning
+	default:
+		state = InstanceStateStarting
+	}
+
+	return state
 }
