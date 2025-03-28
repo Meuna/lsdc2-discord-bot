@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"sort"
 	"strconv"
@@ -313,6 +314,7 @@ func (srv Server) StartInstance(bot BotEnv) (Instance, error) {
 		return Instance{}, fmt.Errorf("StartTask / %w", err)
 	}
 
+	// Prepare instance entry
 	inst := Instance{
 		EngineType:      spec.EngineType,
 		ServerName:      srv.Name,
@@ -321,9 +323,22 @@ func (srv Server) StartInstance(bot BotEnv) (Instance, error) {
 		OpenPorts:       fmt.Sprintf("%s", spec.OpenPorts()),
 	}
 
+	// Build the instance environment
+	instEnvMap := map[string]string{
+		"LSDC2_BUCKET":    bot.Bucket,
+		"LSDC2_QUEUE_URL": bot.QueueUrl,
+		"LSDC2_INSTANCE":  srv.Name, // FIXME: remove when serverwrap is fully updated
+		"LSDC2_SERVER":    srv.Name,
+		"DEBUG":           os.Getenv("DEBUG"),
+	}
+	if spec.EnvMap != nil {
+		maps.Copy(instEnvMap, spec.EnvMap)
+	}
+	maps.Copy(instEnvMap, srv.EnvMap)
+
 	if spec.EngineType == EcsEngineType {
 		taskFamily := taskFamily(srv.GuildID, srv.Name)
-		if err := RegisterTaskFamily(bot.Lsdc2Stack, spec, srv.EnvMap, taskFamily); err != nil {
+		if err := RegisterTaskFamily(bot.Lsdc2Stack, spec, instEnvMap, taskFamily); err != nil {
 			return Instance{}, fmt.Errorf("RegisterTask / %w", err)
 		}
 		taskArn, err := StartEcsTask(bot.Lsdc2Stack, spec, taskFamily)
