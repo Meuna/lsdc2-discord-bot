@@ -361,25 +361,14 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 		return
 	}
 
-	// Create the server struct
+	// And register server in db
 	srv := internal.Server{
 		GuildID:   args.GuildID,
 		Name:      srvName,
 		SpecName:  spec.Name,
 		ChannelID: chanID,
+		EnvMap:    args.Env,
 	}
-
-	srv.EnvMap = map[string]string{}
-	if spec.EnvMap != nil {
-		maps.Copy(srv.EnvMap, spec.EnvMap)
-	}
-	srv.EnvMap["LSDC2_BUCKET"] = bot.Bucket
-	srv.EnvMap["LSDC2_INSTANCE"] = srv.Name // FIXME: remove when serverwrap is fully updated
-	srv.EnvMap["LSDC2_SERVER"] = srv.Name
-	srv.EnvMap["LSDC2_QUEUE_URL"] = bot.QueueUrl
-	maps.Copy(srv.EnvMap, args.Env)
-
-	// And register server in db
 	bot.Logger.Debug("spinupServer: register server", zap.Any("srv", srv))
 	if err = internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))

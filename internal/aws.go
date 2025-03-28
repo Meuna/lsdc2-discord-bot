@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -492,9 +491,6 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 	builder.WriteString(fmt.Sprintf("AWS_REGION=%s\n", stack.AwsRegion))
 	for key, value := range env {
 		builder.WriteString(fmt.Sprintf("%s=%s\n", key, value))
-	}
-	if os.Getenv("DEBUG") != "" {
-		builder.WriteString("DEBUG=1\n")
 	}
 	builder.WriteString("EOF\n")
 	builder.WriteString("systemctl start lsdc2.service\n")
