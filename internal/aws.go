@@ -509,6 +509,16 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 		IamInstanceProfile: &ec2Types.IamInstanceProfileSpecification{
 			Arn: aws.String(stack.Ec2VMProfileArn),
 		},
+		BlockDeviceMappings: []ec2Types.BlockDeviceMapping{
+			{
+				DeviceName: aws.String("/dev/sda1"),
+				Ebs: &ec2Types.EbsBlockDevice{
+					VolumeType: ec2Types.VolumeTypeGp3,
+					Iops:       aws.Int32(min(max(3000, ec2Spec.Iops), 6000)),
+					Throughput: aws.Int32(min(max(125, ec2Spec.Throughput), 600)),
+				},
+			},
+		},
 		InstanceMarketOptions: &ec2Types.InstanceMarketOptionsRequest{
 			MarketType: ec2Types.MarketTypeSpot,
 		},
@@ -519,16 +529,6 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 		SubnetId:          aws.String(stack.Subnets[0]), // FIXME: do something better
 		TagSpecifications: ec2Tags(ec2Types.ResourceTypeInstance),
 		UserData:          aws.String(userDatab64),
-	}
-	if ec2Spec.Storage > 0 {
-		input.BlockDeviceMappings = []ec2Types.BlockDeviceMapping{
-			{
-				DeviceName: aws.String("/dev/sda1"),
-				Ebs: &ec2Types.EbsBlockDevice{
-					VolumeSize: aws.Int32(min(max(8, ec2Spec.Storage), 200)),
-				},
-			},
-		}
 	}
 	result, err := client.RunInstances(context.TODO(), input)
 	if err != nil {
