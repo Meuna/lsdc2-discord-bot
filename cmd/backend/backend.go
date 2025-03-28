@@ -377,7 +377,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 	srv.EnvMap["LSDC2_INSTANCE"] = srv.Name // FIXME: remove when serverwrap is fully updated
 	srv.EnvMap["LSDC2_SERVER"] = srv.Name
 	srv.EnvMap["LSDC2_QUEUE_URL"] = bot.QueueUrl
-	maps.Copy(spec.EnvMap, args.Env)
+	maps.Copy(srv.EnvMap, args.Env)
 
 	// And register server in db
 	bot.Logger.Debug("spinupServer: register server", zap.Any("srv", srv))
@@ -504,7 +504,7 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 	srv.EnvMap["LSDC2_INSTANCE"] = srv.Name // FIXME: remove when serverwrap is fully updated
 	srv.EnvMap["LSDC2_SERVER"] = srv.Name
 	srv.EnvMap["LSDC2_QUEUE_URL"] = bot.QueueUrl
-	maps.Copy(spec.EnvMap, args.Env)
+	maps.Copy(srv.EnvMap, args.Env)
 
 	bot.Logger.Debug("confServer: update server entry", zap.Any("srv", srv))
 	if err = internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
