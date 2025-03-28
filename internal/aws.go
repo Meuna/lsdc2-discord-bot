@@ -479,6 +479,12 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 		return "", errors.New("engine spec is not an EC2 engine")
 	}
 
+	// Get AMI ID from AMI name
+	amiID, err := GetAmiID(ec2Spec.Ami)
+	if err != nil {
+		return "", err
+	}
+
 	// Build user data script
 	var builder strings.Builder
 	builder.WriteString("#!/bin/bash\n")
@@ -503,7 +509,7 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 	client := ec2.NewFromConfig(cfg)
 
 	input := &ec2.RunInstancesInput{
-		ImageId: aws.String(ec2Spec.Ami),
+		ImageId: aws.String(amiID),
 		IamInstanceProfile: &ec2Types.IamInstanceProfileSpecification{
 			Arn: aws.String(stack.Ec2VMProfileArn),
 		},
@@ -582,6 +588,31 @@ func DescribeInstance(instanceID string) (ec2Types.Instance, error) {
 		return ec2Types.Instance{}, nil
 	}
 	return result.Reservations[0].Instances[0], nil
+}
+
+func GetAmiID(amiName string) (string, error) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", err
+	}
+	client := ec2.NewFromConfig(cfg)
+
+	out, err := client.DescribeImages(context.TODO(), &ec2.DescribeImagesInput{
+		Filters: []ec2Types.Filter{
+			{
+				Name:   aws.String("name"),
+				Values: []string{amiName},
+			},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(out.Images) == 0 {
+		return "", fmt.Errorf("no ami found with name %s", amiName)
+	}
+
+	return *out.Images[0].ImageId, nil
 }
 
 // CreateSecurityGroup creates a new security group in AWS EC2. The security

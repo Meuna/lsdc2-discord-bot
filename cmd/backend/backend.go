@@ -574,7 +574,7 @@ func (bot Backend) startServer(cmd internal.BackendCmd) {
 
 	// Start a dedicated thread
 	sess, _ := discordgo.New("Bot " + bot.Token)
-	thread, err := sess.ThreadStart(args.ChannelID, "🔵 Instance is starting ...", discordgo.ChannelTypeGuildPublicThread, 10080)
+	thread, err := sess.ThreadStart(args.ChannelID, "🔵 Instance is starting ...", discordgo.ChannelTypeGuildPublicThread, 1440)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "ThreadStart"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
