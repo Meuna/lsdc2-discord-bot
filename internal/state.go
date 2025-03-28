@@ -348,7 +348,7 @@ func (srv Server) StartInstance(bot BotEnv) (Instance, error) {
 		}
 		inst.EngineID = taskArn
 	} else {
-		instanceID, err := StartEc2VM(bot.Lsdc2Stack, spec, srv.EnvMap)
+		instanceID, err := StartEc2VM(bot.Lsdc2Stack, spec, instEnvMap)
 		if err != nil {
 			return Instance{}, fmt.Errorf("StartEc2Instance / %w", err)
 		}
