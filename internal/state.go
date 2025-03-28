@@ -367,7 +367,7 @@ func (inst Instance) StopInstance(bot BotEnv) error {
 			return fmt.Errorf("DeregisterTaskFamily / %w", err)
 		}
 	} else {
-		err := SendCommand(inst.EngineID, "sudo systemctl stop lsdc2.service; sudo shutdown +5")
+		err := SendCommand(inst.EngineID, "sudo systemctl stop lsdc2.service")
 		if err != nil {
 			return fmt.Errorf("StopEc2Instance / %w", err)
 		}
