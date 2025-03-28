@@ -242,18 +242,6 @@ func (s ServerSpec) OpenPorts() []string {
 	return keys
 }
 
-// AwsEnvSpec returns a []*ecs.KeyValuePair representation of
-// the ServerSpec environment variables
-func (s ServerSpec) AwsEnvSpec() []ecsTypes.KeyValuePair {
-	envArray := make([]ecsTypes.KeyValuePair, len(s.EnvMap))
-	idx := 0
-	for k, v := range s.EnvMap {
-		envArray[idx] = ecsTypes.KeyValuePair{Name: aws.String(k), Value: aws.String(v)}
-		idx = idx + 1
-	}
-	return envArray
-}
-
 // AwsPortSpec returns a []*ecs.PortMapping representation of
 // the ServerSpec ports
 func (s ServerSpec) AwsPortSpec() []ecsTypes.PortMapping {

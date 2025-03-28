@@ -54,7 +54,7 @@ type BackendCmd struct {
 // it initializes the appropriate Args structure and then unmarshals the
 // Args field into this structure.
 func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
-	type backendCmd BackendCmd
+	type backendCmd BackendCmd //FIXME: use the Alias naming for the temporary struct
 	var tmp struct {
 		backendCmd
 		Args json.RawMessage
@@ -77,6 +77,8 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 		cmd.Args = &SpinupArgs{}
 	case ConfAPI:
 		cmd.Args = &ConfArgs{}
+	case StartAPI:
+		cmd.Args = &StartArgs{}
 	case DestroyAPI:
 		cmd.Args = &DestroyArgs{}
 	case InviteAPI:
@@ -109,6 +111,8 @@ func (cmd BackendCmd) MarshalJSON() ([]byte, error) {
 		cmd.Api = SpinupAPI
 	case *ConfArgs, ConfArgs:
 		cmd.Api = ConfAPI
+	case *StartArgs, StartArgs:
+		cmd.Api = StartAPI
 	case *DestroyArgs, DestroyArgs:
 		cmd.Api = DestroyAPI
 	case *InviteArgs, InviteArgs:
@@ -146,6 +150,10 @@ type SpinupArgs struct {
 type ConfArgs struct {
 	ChannelID string
 	Env       map[string]string
+}
+
+type StartArgs struct {
+	ChannelID string
 }
 
 type DestroyArgs struct {

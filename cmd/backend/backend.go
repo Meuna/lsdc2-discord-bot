@@ -222,6 +222,9 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 	case internal.ConfAPI:
 		bot.confServer(cmd)
 
+	case internal.StartAPI:
+		bot.startServer(cmd)
+
 	case internal.DestroyAPI:
 		bot.destroyServer(cmd)
 
@@ -511,6 +514,91 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 	}
 
 	bot.followUp(cmd, "✅ %s server configuration updated ! (require server restart)", srv.Name)
+}
+
+//===== Section: server start
+
+// startServer starts a server for the given channel ID. It performs the
+// following steps:
+//  1. Retrieves the server details from DynamoDB.
+//  2. Verifies that the task is not already running or in the process of
+//     starting/stopping.
+//  3. Create a dedicated discord thread.
+//  4. Starts the server task/instance if it is not already running.
+//  5. Add an instance entry in the db.
+func (bot Backend) startServer(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.StartArgs)
+	bot.Logger.Debug("received server start request", zap.Any("args", args))
+
+	// Retrieve server details
+	srv := internal.Server{}
+	err := internal.DynamodbGetItem(bot.ServerTable, args.ChannelID, &srv)
+	if err != nil {
+		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	if srv.SpecName == "" {
+		bot.followUp(cmd, "🚫 Unrecognised server channel")
+		return
+	}
+
+	// Check if the server is already running
+	existingInst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerName", srv.Name)
+	if err != nil {
+		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	if existingInst.EngineID != "" {
+		instanceState, err := existingInst.GetState(bot.Lsdc2Stack.EcsClusterName)
+		if err != nil {
+			bot.Logger.Error("error in startServer", zap.String("culprit", "GetState"), zap.Error(err))
+			bot.followUp(cmd, "🚫 Internal error")
+			return
+		}
+		// Test for early return cases
+		switch instanceState {
+		case internal.InstanceStateStopping:
+			bot.followUp(cmd, "⚠️ Server is going offline. Please wait and try again")
+			return
+		case internal.InstanceStateStarting:
+			bot.followUp(cmd, "⚠️ Server is starting. Please wait a few minutes")
+			return
+		case internal.InstanceStateRunning:
+			bot.followUp(cmd, "⚠️ Server is already running. Look for connection info in instance thread")
+			return
+		}
+		// No match == we can start a server
+	}
+
+	// Start a dedicated thread
+	sess, _ := discordgo.New("Bot " + bot.Token)
+	thread, err := sess.ThreadStart(args.ChannelID, "🔵 Instance is starting ...", discordgo.ChannelTypeGuildPublicThread, 10080)
+	if err != nil {
+		bot.Logger.Error("error in startServer", zap.String("culprit", "ThreadStart"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Start the task
+	inst, err := srv.StartInstance(bot.BotEnv)
+	if err != nil {
+		bot.Logger.Error("error in startServer", zap.String("culprit", "StartTask"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Register the thread ID and task ARN in the instance entry
+	inst.ThreadID = thread.ID
+	bot.Logger.Debug("startServer: persiste instance in db", zap.Any("inst", inst))
+	err = internal.DynamodbPutItem(bot.InstanceTable, inst)
+	if err != nil {
+		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+	bot.followUp(cmd, "✅ Server starting (wait few minutes)")
 }
 
 //===== Section: server destroy

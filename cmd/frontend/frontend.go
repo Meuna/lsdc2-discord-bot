@@ -221,14 +221,14 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.Lambd
 		return bot.serverCreationFrontloop(itn)
 	case internal.ConfAPI:
 		return bot.serverConfigurationFrontloop(itn)
+	case internal.StartAPI:
+		return bot.serverStartCall(itn)
 	case internal.DestroyAPI:
 		return bot.serverDestructionFrontloop(itn)
 	case internal.InviteAPI:
 		return bot.memberInviteCall(itn)
 	case internal.KickAPI:
 		return bot.memberKickCall(itn)
-	case internal.StartAPI:
-		return bot.startServer(itn.ChannelID)
 	case internal.StopAPI:
 		return bot.stopServer(itn.ChannelID)
 	case internal.StatusAPI:
@@ -594,6 +594,23 @@ func (bot Frontend) serverCreationCall(itn discordgo.Interaction) (events.APIGat
 	return bot.ackMessage()
 }
 
+// serverStartCall send a start command for the backend.
+func (bot Frontend) serverStartCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	cmd := internal.BackendCmd{
+		AppID: itn.AppID,
+		Token: itn.Token,
+		Args: internal.StartArgs{
+			ChannelID: itn.ChannelID,
+		},
+	}
+
+	if err := bot.callBackend(cmd); err != nil {
+		bot.Logger.Error("error in serverStartCall", zap.String("culprit", "callBackend"), zap.Error(err))
+		return bot.reply("🚫 Internal error")
+	}
+	return bot.ackMessage()
+}
+
 // serverConfigurationCall is used as the step 2 of a frontloop, after the step 1
 // replied with a server configuration modal. The function gathers the prompted
 // parameters and call the backend.
@@ -677,76 +694,6 @@ func (bot Frontend) memberKickCall(itn discordgo.Interaction) (events.APIGateway
 //===== Section: frontend commands
 
 // Functions in this section fully implement the requested command at the frontend level.
-
-// startServer starts a server for the given channel ID. It performs the
-// following steps:
-//  1. Retrieves the server details from DynamoDB.
-//  2. Verifies that the task is not already running or in the process of
-//     starting/stopping.
-//  3. Create a dedicated discord thread.
-//  4. Starts the server task/instance if it is not already running.
-//  5. Add an instance entry in the db.
-func (bot Frontend) startServer(channelID string) (events.APIGatewayProxyResponse, error) {
-	// Retrieve server details
-	srv := internal.Server{}
-	err := internal.DynamodbGetItem(bot.ServerTable, channelID, &srv)
-	if err != nil {
-		bot.Logger.Error("error in serverConfigurationFrontloop", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-	if srv.SpecName == "" {
-		return bot.reply("🚫 Unrecognised server channel")
-	}
-
-	// Check if the server is already running
-	existingInst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerName", srv.Name)
-	if err != nil {
-		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-	if existingInst.EngineID != "" {
-		instanceState, err := existingInst.GetState(bot.Lsdc2Stack.EcsClusterName)
-		if err != nil {
-			bot.Logger.Error("error in startServer", zap.String("culprit", "GetState"), zap.Error(err))
-			return bot.reply("🚫 Internal error")
-		}
-		// Test for early return cases
-		switch instanceState {
-		case internal.InstanceStateStopping:
-			return bot.reply("⚠️ Server is going offline. Please wait and try again")
-		case internal.InstanceStateStarting:
-			return bot.reply("⚠️ Server is starting. Please wait a few minutes")
-		case internal.InstanceStateRunning:
-			return bot.serverStatus(channelID)
-		}
-		// No match == we can start a server
-	}
-
-	// Start a dedicated thread
-	sess, _ := discordgo.New("Bot " + bot.Token)
-	thread, err := sess.ThreadStart(channelID, "🔵 Instance is starting ...", discordgo.ChannelTypeGuildPublicThread, 10080)
-	if err != nil {
-		bot.Logger.Error("error in startServer", zap.String("culprit", "ThreadStart"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-
-	// Start the task
-	inst, err := srv.StartInstance(bot.BotEnv)
-	if err != nil {
-		bot.Logger.Error("error in startServer", zap.String("culprit", "StartTask"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-
-	// Register the thread ID and task ARN in the instance entry
-	inst.ThreadID = thread.ID
-	bot.Logger.Debug("startServer: persiste instance in db", zap.Any("inst", inst))
-	err = internal.DynamodbPutItem(bot.InstanceTable, inst)
-	if err != nil {
-		bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
-		return bot.reply("🚫 Internal error")
-	}
-	return bot.reply("✅ Server starting (wait few minutes)")
-}
 
 // stopServer stops the server for the given channel ID. It performs the
 // following steps:
