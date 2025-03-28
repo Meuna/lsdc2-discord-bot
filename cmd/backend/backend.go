@@ -10,8 +10,6 @@ import (
 	"github.com/meuna/lsdc2-discord-bot/internal"
 	"go.uber.org/zap"
 
-	"maps"
-
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	ec2Types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -485,16 +483,7 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 	}
 
 	// Reset server env
-	srv.EnvMap = map[string]string{}
-	if spec.EnvMap != nil {
-		maps.Copy(srv.EnvMap, spec.EnvMap)
-	}
-	srv.EnvMap["LSDC2_BUCKET"] = bot.Bucket
-	srv.EnvMap["LSDC2_INSTANCE"] = srv.Name // FIXME: remove when serverwrap is fully updated
-	srv.EnvMap["LSDC2_SERVER"] = srv.Name
-	srv.EnvMap["LSDC2_QUEUE_URL"] = bot.QueueUrl
-	maps.Copy(srv.EnvMap, args.Env)
-
+	srv.EnvMap = args.Env
 	bot.Logger.Debug("confServer: update server entry", zap.Any("srv", srv))
 	if err = internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
