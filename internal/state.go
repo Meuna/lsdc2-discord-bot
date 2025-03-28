@@ -117,7 +117,8 @@ func (e EcsEngine) MissingField() []string {
 type Ec2Engine struct {
 	Ami          string `json:"ami"`
 	InstanceType string `json:"instanceType"`
-	Storage      int32  `json:"storage"`
+	Iops         int32  `json:"iops"`
+	Throughput   int32  `json:"throughput"`
 }
 
 // MissingField returns a list of required ServerSpec fields
