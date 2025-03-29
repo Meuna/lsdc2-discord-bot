@@ -119,6 +119,7 @@ type Ec2Engine struct {
 	InstanceType string `json:"instanceType"`
 	Iops         int32  `json:"iops"`
 	Throughput   int32  `json:"throughput"`
+	Fastboot     bool   `json:"fastboot"`
 }
 
 // MissingField returns a list of required ServerSpec fields
@@ -318,6 +319,7 @@ func (srv Server) StartInstance(bot BotEnv) (Instance, error) {
 	// Prepare instance entry
 	inst := Instance{
 		EngineType:      spec.EngineType,
+		SpecName:        srv.SpecName,
 		ServerName:      srv.Name,
 		ServerChannelID: srv.ChannelID,
 		ServerGuildID:   srv.GuildID,
@@ -367,6 +369,7 @@ type Instance struct {
 	EngineID        string `dynamodbav:"key"`
 	EngineType      EngineType
 	ThreadID        string
+	SpecName        string
 	ServerName      string
 	ServerChannelID string
 	ServerGuildID   string
