@@ -729,7 +729,7 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 		bot.Logger.Error("error in stopServer", zap.String("culprit", "StopTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
-	return bot.reply("⚠️ Server is going offline")
+	return bot.reply("Server is going offline")
 }
 
 // serverStatus retrieves the status of the server associated with the
