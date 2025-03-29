@@ -620,7 +620,7 @@ func (bot Backend) startServer(cmd internal.BackendCmd) {
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	bot.followUp(cmd, "✅ Server starting (wait few minutes)")
+	bot.followUp(cmd, "Server starting (wait few minutes)")
 }
 
 //===== Section: server destroy
