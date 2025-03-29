@@ -54,19 +54,20 @@ type BackendCmd struct {
 // it initializes the appropriate Args structure and then unmarshals the
 // Args field into this structure.
 func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
-	type backendCmd BackendCmd //FIXME: use the Alias naming for the temporary struct
-	var tmp struct {
-		backendCmd
+	type Alias BackendCmd
+	var aux struct {
+		Alias
 		Args json.RawMessage
 	}
-	err := json.Unmarshal(src, &tmp)
+
+	err := json.Unmarshal(src, &aux)
 	if err != nil {
 		return err
 	}
 
-	*cmd = BackendCmd(tmp.backendCmd)
+	*cmd = BackendCmd(aux.Alias)
 
-	switch tmp.Api {
+	switch aux.Api {
 	case RegisterGameAPI:
 		cmd.Args = &RegisterGameArgs{}
 	case WelcomeAPI:
@@ -88,10 +89,10 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 	case TaskNotifyAPI:
 		cmd.Args = &TaskNotifyArgs{}
 	default:
-		return fmt.Errorf("unknown command: %s", tmp.Api)
+		return fmt.Errorf("unknown command: %s", aux.Api)
 	}
 
-	return json.Unmarshal(tmp.Args, cmd.Args)
+	return json.Unmarshal(aux.Args, cmd.Args)
 }
 
 // Custom JSON marshaler for the BackendCmd type. It sets the Api field

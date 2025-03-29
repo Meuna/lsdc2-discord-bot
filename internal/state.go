@@ -330,7 +330,6 @@ func (srv Server) StartInstance(bot BotEnv) (Instance, error) {
 	instEnvMap := map[string]string{
 		"LSDC2_BUCKET":    bot.Bucket,
 		"LSDC2_QUEUE_URL": bot.QueueUrl,
-		"LSDC2_INSTANCE":  srv.Name, // FIXME: remove when serverwrap is fully updated
 		"LSDC2_SERVER":    srv.Name,
 		"DEBUG":           os.Getenv("DEBUG"),
 	}
