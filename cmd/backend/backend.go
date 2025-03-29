@@ -194,14 +194,14 @@ func (bot Backend) handleSQSEvent(event events.SQSEvent) {
 				zap.Error(err),
 			)
 		} else {
-			bot.routeFcn(cmd)
+			bot.routeApi(cmd)
 		}
 	}
 }
 
-// routeFcn routes the given BackendCmd to the appropriate handler function
+// routeApi routes the given BackendCmd to the appropriate handler function
 // based on the Api field of the command.
-func (bot Backend) routeFcn(cmd internal.BackendCmd) {
+func (bot Backend) routeApi(cmd internal.BackendCmd) {
 	bot.Logger.Debug("routing command", zap.Any("cmd", cmd))
 
 	switch cmd.Api {
@@ -233,10 +233,56 @@ func (bot Backend) routeFcn(cmd internal.BackendCmd) {
 		bot.kickMember(cmd)
 
 	case internal.TaskNotifyAPI:
-		bot.forwardTaskNotification(cmd)
+		bot.routeInstanceNotification(cmd)
 
 	default:
 		bot.Logger.Error("unrecognized function", zap.String("action", cmd.Api))
+	}
+}
+
+// routeInstanceNotification message whatever message the task sent to
+// the discord thread
+func (bot Backend) routeInstanceNotification(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.TaskNotifyArgs)
+
+	// Retrieve instance details
+	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerName", args.ServerName)
+	if err != nil {
+		bot.Logger.Error("error in forwardTaskNotification", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
+		return
+	}
+
+	if args.Action == "error" {
+		bot.message(inst.ThreadID, "🚫 %s", args.Message)
+	} else {
+		bot.message(inst.ThreadID, "📢 %s", args.Message)
+	}
+
+	// When the server is ready, when using the EC2 engine and if fastboot
+	// is configured, restore the baseline EBS performance
+	if args.Action == "server-ready" && inst.EngineType == internal.Ec2EngineType {
+		// Retrieve the server
+		spec := internal.ServerSpec{}
+		if err := internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec); err != nil {
+			bot.Logger.Error("error in routeInstanceNotification", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+			bot.message(inst.ThreadID, "🚫 Internal error")
+			return
+		}
+
+		ec2Spec, ok := spec.Engine.(*internal.Ec2Engine)
+		if !ok {
+			bot.Logger.Error("engine spec is not an EC2 engine", zap.Any("spec", spec))
+			bot.message(inst.ThreadID, "🚫 Internal error")
+			return
+		}
+
+		if ec2Spec.Fastboot {
+			if err := internal.RestoreEbsBaseline(inst.EngineID); err != nil {
+				bot.Logger.Error("error in routeInstanceNotification", zap.String("culprit", "RestoreEbsBaseline"), zap.Error(err))
+				bot.message(inst.ThreadID, "🚫 Internal error")
+				return
+			}
+		}
 	}
 }
 
@@ -466,8 +512,7 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 	bot.Logger.Debug("received server conf request", zap.Any("args", args))
 
 	srv := internal.Server{}
-	err := internal.DynamodbGetItem(bot.ServerTable, args.ChannelID, &srv)
-	if err != nil {
+	if err := internal.DynamodbGetItem(bot.ServerTable, args.ChannelID, &srv); err != nil {
 		bot.Logger.Error("error in confServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -475,8 +520,7 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 
 	// Get the game spec
 	spec := internal.ServerSpec{}
-	err = internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec)
-	if err != nil {
+	if err := internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec); err != nil {
 		bot.Logger.Error("error in confServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -485,7 +529,7 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 	// Reset server env
 	srv.EnvMap = args.Env
 	bot.Logger.Debug("confServer: update server entry", zap.Any("srv", srv))
-	if err = internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
+	if err := internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -1159,23 +1203,6 @@ func (bot Backend) _ensureChannelIsAServer(channelID string) error {
 		return errors.New("someone managed to run the invite command in a non-game channel")
 	}
 	return nil
-}
-
-//===== Section: invite/Kick command
-
-// forwardTaskNotification message whatever message the task sent to
-// the discord thread
-func (bot Backend) forwardTaskNotification(cmd internal.BackendCmd) {
-	args := *cmd.Args.(*internal.TaskNotifyArgs)
-
-	// Retrieve server details
-	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerName", args.ServerName)
-	if err != nil {
-		bot.Logger.Error("error in forwardTaskNotification", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))
-		return
-	}
-
-	bot.message(inst.ThreadID, "📢 %s", args.Message)
 }
 
 //===== Section: bot reply helpers

@@ -177,7 +177,8 @@ type KickArgs struct {
 }
 
 type TaskNotifyArgs struct {
-	ServerName string `json:"InstanceName"` // FIXME: this is a temporary fix for serverwrap
+	ServerName string
+	Action     string
 	Message    string
 }
 

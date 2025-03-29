@@ -468,7 +468,7 @@ func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (event
 	acd := itn.ApplicationCommandData()
 	serverName := acd.Options[0].StringValue()
 
-	// Retrieve the chanel ID
+	// Retrieve the server
 	srv, err := internal.DynamodbScanFindFirst[internal.Server](bot.ServerTable, "Name", serverName)
 	if err != nil {
 		bot.Logger.Error("error in confirmServerDestruction", zap.String("culprit", "DynamodbScanFindFirst"), zap.Error(err))

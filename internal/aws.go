@@ -586,6 +586,7 @@ func DescribeInstance(instanceID string) (ec2Types.Instance, error) {
 	return result.Reservations[0].Instances[0], nil
 }
 
+// GetAmiID returns the first AMI that match the provided name
 func GetAmiID(amiName string) (string, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -609,6 +610,29 @@ func GetAmiID(amiName string) (string, error) {
 	}
 
 	return *out.Images[0].ImageId, nil
+}
+
+func RestoreEbsBaseline(instanceID string) error {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return err
+	}
+	client := ec2.NewFromConfig(cfg)
+
+	vm, err := DescribeInstance(instanceID)
+	if err != nil {
+		return err
+	}
+
+	volumeID := vm.BlockDeviceMappings[0].Ebs.VolumeId
+
+	_, err = client.ModifyVolume(context.TODO(), &ec2.ModifyVolumeInput{
+		VolumeId:   volumeID,
+		Iops:       aws.Int32(3000),
+		Throughput: aws.Int32(125),
+	})
+
+	return err
 }
 
 // CreateSecurityGroup creates a new security group in AWS EC2. The security
@@ -683,7 +707,7 @@ func EnsureAndWaitSecurityGroupDeletion(groupName string, stack Lsdc2Stack) erro
 	tries := 0
 	for {
 		if tries > maxTries {
-			return fmt.Errorf("wait timeout")
+			return errors.New("wait timeout")
 		}
 		time.Sleep(time.Second * 2)
 		sg, err = client.DescribeSecurityGroups(context.TODO(), descInput)
@@ -736,7 +760,7 @@ func PresignGetS3Object(bucket string, key string, expire time.Duration) (string
 		return "", err
 	}
 	if req == nil {
-		return "", fmt.Errorf("PresignGetObject returned a nil request")
+		return "", errors.New("PresignGetObject returned a nil request")
 	}
 	return req.URL, nil
 }
@@ -763,7 +787,7 @@ func PresignPutS3Object(bucket string, key string, expire time.Duration) (string
 		return "", err
 	}
 	if req == nil {
-		return "", fmt.Errorf("PresignPutObject returned a nil request")
+		return "", errors.New("PresignPutObject returned a nil request")
 	}
 	return req.URL, nil
 }
