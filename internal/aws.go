@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -498,6 +500,12 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 	userDataScript := builder.String()
 	userDatab64 := base64.StdEncoding.EncodeToString([]byte(userDataScript))
 
+	// Get cheapest subnet
+	cheapestSubnet, err := GetCheapestSubnet(stack, ec2Types.InstanceType(ec2Spec.InstanceType))
+	if err != nil {
+		return "", err
+	}
+
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return "", err
@@ -526,7 +534,7 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 		MaxCount:          aws.Int32(1),
 		MinCount:          aws.Int32(1),
 		SecurityGroupIds:  []string{spec.SecurityGroup},
-		SubnetId:          aws.String(stack.Subnets[0]), // FIXME: do something better
+		SubnetId:          aws.String(cheapestSubnet),
 		TagSpecifications: ec2Tags(ec2Types.ResourceTypeInstance),
 		UserData:          aws.String(userDatab64),
 	}
@@ -610,6 +618,47 @@ func GetAmiID(amiName string) (string, error) {
 	}
 
 	return *out.Images[0].ImageId, nil
+}
+
+func GetCheapestSubnet(stack Lsdc2Stack, instanceType ec2Types.InstanceType) (string, error) {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return "", err
+	}
+	client := ec2.NewFromConfig(cfg)
+
+	outSubnets, err := client.DescribeSubnets(context.TODO(), &ec2.DescribeSubnetsInput{
+		SubnetIds: stack.Subnets,
+	})
+	if err != nil {
+		return "", err
+	}
+	bestPrice := math.Inf(1)
+	bestSubnet := stack.Subnets[0]
+	for _, sn := range outSubnets.Subnets {
+		outPrice, err := client.DescribeSpotPriceHistory(context.TODO(), &ec2.DescribeSpotPriceHistoryInput{
+			AvailabilityZone: sn.AvailabilityZone,
+			InstanceTypes:    []ec2Types.InstanceType{instanceType},
+			EndTime:          aws.Time(time.Now()),
+			MaxResults:       aws.Int32(1),
+		})
+		if err != nil {
+			return "", err
+		}
+		if len(outPrice.SpotPriceHistory) > 0 {
+			azPrice, err := strconv.ParseFloat(*outPrice.SpotPriceHistory[0].SpotPrice, 64)
+			if err != nil {
+				return "", err
+			}
+			fmt.Printf("%s/%s: %s (%s)\n", *sn.AvailabilityZone, *sn.SubnetId, *outPrice.SpotPriceHistory[0].SpotPrice, outPrice.SpotPriceHistory[0].Timestamp.Format("Mon Jan _2 15:04:05 2006"))
+			if azPrice < bestPrice {
+				bestPrice = azPrice
+				bestSubnet = *sn.SubnetId
+			}
+		}
+	}
+
+	return bestSubnet, nil
 }
 
 func RestoreEbsBaseline(instanceID string) error {
