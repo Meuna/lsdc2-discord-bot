@@ -287,6 +287,7 @@ func RegisterTaskFamily(stack Lsdc2Stack, spec ServerSpec, env map[string]string
 		},
 		ContainerDefinitions: []ecsTypes.ContainerDefinition{
 			{
+				StopTimeout:  aws.Int32(120),
 				Essential:    aws.Bool(true),
 				Image:        aws.String(ecsSpec.Image),
 				Name:         aws.String(spec.Name + "_container"),
