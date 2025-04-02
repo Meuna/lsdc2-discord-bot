@@ -242,10 +242,16 @@ func DynamodbScanFindFirst[T any](tableName string, key string, value string) (o
 //===== Section: ECS
 
 // Default ECS tag value
-func ecsTags() []ecsTypes.Tag {
-	return []ecsTypes.Tag{
-		{Key: aws.String("lsdc2-src"), Value: aws.String("discord")},
+func ecsTags(tagMap map[string]string) []ecsTypes.Tag {
+	tagList := make([]ecsTypes.Tag, len(tagMap)+2)
+	tagList[0] = ecsTypes.Tag{Key: aws.String("lsdc2"), Value: aws.String("true")}
+	tagList[1] = ecsTypes.Tag{Key: aws.String("lsdc2.src"), Value: aws.String("discord-bot")}
+	idx := 2
+	for key, value := range tagMap {
+		tagList[idx] = ecsTypes.Tag{Key: aws.String(key), Value: aws.String(value)}
+		idx = idx + 1
 	}
+	return tagList
 }
 
 // RegisterTaskFamily registers a new ECS task definition with the specified parameters.
@@ -273,7 +279,7 @@ func RegisterTaskFamily(stack Lsdc2Stack, spec ServerSpec, env map[string]string
 	}
 
 	input := &ecs.RegisterTaskDefinitionInput{
-		Tags:                    ecsTags(),
+		Tags:                    ecsTags(map[string]string{"lsdc2.gamename": spec.Name}),
 		Family:                  aws.String(taskFamily),
 		Cpu:                     aws.String(ecsSpec.Cpu),
 		Memory:                  aws.String(ecsSpec.Memory),
@@ -352,7 +358,7 @@ func StartEcsTask(stack Lsdc2Stack, spec ServerSpec, taskFamily string) (arn str
 	copy(subnets, stack.Subnets)
 
 	result, err := client.RunTask(context.TODO(), &ecs.RunTaskInput{
-		Tags: ecsTags(),
+		Tags: ecsTags(map[string]string{"lsdc2.gamename": spec.Name}),
 		CapacityProviderStrategy: []ecsTypes.CapacityProviderStrategyItem{
 			{CapacityProvider: aws.String("FARGATE_SPOT")},
 		},
@@ -462,13 +468,21 @@ func GetEcsTaskIP(task ecsTypes.Task) (string, error) {
 //===== Section: EC2
 
 // Default EC2 tag value
-func ec2Tags(resourceType ec2Types.ResourceType) []ec2Types.TagSpecification {
+func ec2Tags(resourceType ec2Types.ResourceType, tagMap map[string]string) []ec2Types.TagSpecification {
+
+	tagList := make([]ec2Types.Tag, len(tagMap)+2)
+	tagList[0] = ec2Types.Tag{Key: aws.String("lsdc2"), Value: aws.String("true")}
+	tagList[1] = ec2Types.Tag{Key: aws.String("lsdc2.src"), Value: aws.String("discord-bot")}
+	idx := 2
+	for key, value := range tagMap {
+		tagList[idx] = ec2Types.Tag{Key: aws.String(key), Value: aws.String(value)}
+		idx = idx + 1
+	}
+
 	return []ec2Types.TagSpecification{
 		{
 			ResourceType: resourceType,
-			Tags: []ec2Types.Tag{
-				{Key: aws.String("lsdc2-src"), Value: aws.String("discord")},
-			},
+			Tags:         tagList,
 		},
 	}
 }
@@ -536,7 +550,7 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 		MinCount:          aws.Int32(1),
 		SecurityGroupIds:  []string{spec.SecurityGroup},
 		SubnetId:          aws.String(cheapestSubnet),
-		TagSpecifications: ec2Tags(ec2Types.ResourceTypeInstance),
+		TagSpecifications: ec2Tags(ec2Types.ResourceTypeInstance, map[string]string{"lsdc2.gamename": spec.Name}),
 		UserData:          aws.String(userDatab64),
 	}
 	result, err := client.RunInstances(context.TODO(), input)
@@ -698,7 +712,7 @@ func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (groupID string, err
 	client := ec2.NewFromConfig(cfg)
 
 	result, err := client.CreateSecurityGroup(context.TODO(), &ec2.CreateSecurityGroupInput{
-		TagSpecifications: ec2Tags(ec2Types.ResourceTypeSecurityGroup),
+		TagSpecifications: ec2Tags(ec2Types.ResourceTypeSecurityGroup, map[string]string{"lsdc2.gamename": spec.Name}),
 		GroupName:         aws.String(spec.Name),
 		Description:       aws.String(fmt.Sprintf("Security group for LSDC2 %s", spec.Name)),
 		VpcId:             aws.String(stack.Vpc),
@@ -710,7 +724,7 @@ func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (groupID string, err
 
 	// Create ingress rules
 	_, err = client.AuthorizeSecurityGroupIngress(context.TODO(), &ec2.AuthorizeSecurityGroupIngressInput{
-		TagSpecifications: ec2Tags("security-group-rule"),
+		TagSpecifications: ec2Tags(ec2Types.ResourceTypeSecurityGroupRule, map[string]string{"lsdc2.gamename": spec.Name}),
 		GroupId:           result.GroupId,
 		IpPermissions:     spec.AwsIpPermissionSpec(),
 	})
