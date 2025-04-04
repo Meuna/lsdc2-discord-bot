@@ -665,7 +665,6 @@ func GetCheapestSubnet(stack Lsdc2Stack, instanceType ec2Types.InstanceType) (st
 			if err != nil {
 				return "", err
 			}
-			fmt.Printf("%s/%s: %s (%s)\n", *sn.AvailabilityZone, *sn.SubnetId, *outPrice.SpotPriceHistory[0].SpotPrice, outPrice.SpotPriceHistory[0].Timestamp.Format("Mon Jan _2 15:04:05 2006"))
 			if azPrice < bestPrice {
 				bestPrice = azPrice
 				bestSubnet = *sn.SubnetId
