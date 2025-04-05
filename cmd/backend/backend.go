@@ -253,7 +253,7 @@ func (bot Backend) routeInstanceNotification(cmd internal.BackendCmd) {
 	}
 
 	if args.Action == "error" {
-		bot.message(inst.ThreadID, "🚫 %s", args.Message)
+		bot.message(inst.ThreadID, "🚫 %s @here", args.Message)
 	} else if args.Action == "warning" {
 		bot.message(inst.ThreadID, "⚠️ %s @here", args.Message)
 	} else {
