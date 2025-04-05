@@ -516,7 +516,7 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 	userDatab64 := base64.StdEncoding.EncodeToString([]byte(userDataScript))
 
 	// Get cheapest subnet
-	cheapestSubnet, err := GetCheapestSubnet(stack, ec2Types.InstanceType(ec2Spec.InstanceType))
+	instanceType, subnet, err := GetCheapestInstanceType(stack, ec2Spec.InstanceTypes)
 	if err != nil {
 		return "", err
 	}
@@ -545,11 +545,11 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 		InstanceMarketOptions: &ec2Types.InstanceMarketOptionsRequest{
 			MarketType: ec2Types.MarketTypeSpot,
 		},
-		InstanceType:      ec2Types.InstanceType(ec2Spec.InstanceType),
+		InstanceType:      ec2Types.InstanceType(instanceType),
 		MaxCount:          aws.Int32(1),
 		MinCount:          aws.Int32(1),
 		SecurityGroupIds:  []string{spec.SecurityGroup},
-		SubnetId:          aws.String(cheapestSubnet),
+		SubnetId:          aws.String(subnet),
 		TagSpecifications: ec2Tags(ec2Types.ResourceTypeInstance, map[string]string{"lsdc2.gamename": spec.Name}),
 		UserData:          aws.String(userDatab64),
 	}
@@ -635,10 +635,10 @@ func GetAmiID(amiName string) (string, error) {
 	return *out.Images[0].ImageId, nil
 }
 
-func GetCheapestSubnet(stack Lsdc2Stack, instanceType ec2Types.InstanceType) (string, error) {
+func GetCheapestInstanceType(stack Lsdc2Stack, instanceTypes []ec2Types.InstanceType) (ec2Types.InstanceType, string, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	client := ec2.NewFromConfig(cfg)
 
@@ -646,33 +646,40 @@ func GetCheapestSubnet(stack Lsdc2Stack, instanceType ec2Types.InstanceType) (st
 		SubnetIds: stack.Subnets,
 	})
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	bestPrice := math.Inf(1)
 	bestSubnet := stack.Subnets[0]
+	bestInstanceType := instanceTypes[0]
 	for _, sn := range outSubnets.Subnets {
-		outPrice, err := client.DescribeSpotPriceHistory(context.TODO(), &ec2.DescribeSpotPriceHistoryInput{
-			AvailabilityZone: sn.AvailabilityZone,
-			InstanceTypes:    []ec2Types.InstanceType{instanceType},
-			EndTime:          aws.Time(time.Now()),
-			MaxResults:       aws.Int32(1),
-		})
-		if err != nil {
-			return "", err
-		}
-		if len(outPrice.SpotPriceHistory) > 0 {
-			azPrice, err := strconv.ParseFloat(*outPrice.SpotPriceHistory[0].SpotPrice, 64)
+		for _, instanceType := range instanceTypes {
+			out, err := client.DescribeSpotPriceHistory(context.TODO(), &ec2.DescribeSpotPriceHistoryInput{
+				AvailabilityZone:    sn.AvailabilityZone,
+				InstanceTypes:       []ec2Types.InstanceType{instanceType},
+				ProductDescriptions: []string{"Linux/UNIX"},
+				EndTime:             aws.Time(time.Now()),
+				MaxResults:          aws.Int32(1),
+			})
 			if err != nil {
-				return "", err
+				return "", "", err
 			}
-			if azPrice < bestPrice {
-				bestPrice = azPrice
-				bestSubnet = *sn.SubnetId
+			for _, sph := range out.SpotPriceHistory {
+				newBestPrice, err := strconv.ParseFloat(*sph.SpotPrice, 64)
+				if err != nil {
+					return "", "", err
+				}
+
+				if newBestPrice < bestPrice {
+					bestPrice = newBestPrice
+					bestSubnet = *sn.SubnetId
+					bestInstanceType = sph.InstanceType
+				}
+
 			}
 		}
 	}
 
-	return bestSubnet, nil
+	return bestInstanceType, bestSubnet, nil
 }
 
 func RestoreEbsBaseline(instanceID string) error {
