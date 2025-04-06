@@ -263,7 +263,7 @@ func ecsTags(tagMap map[string]string) []ecsTypes.Tag {
 //     environment variables, and port mappings.
 //   - stack: The stack configuration containing task role ARN, execution
 //     role ARN, and log group.
-func RegisterTaskFamily(stack Lsdc2Stack, spec ServerSpec, env map[string]string, taskFamily string) error {
+func RegisterTaskFamily(stack Lsdc2Stack, spec ServerSpec, env map[string]string, serverName string) error {
 	ecsSpec := spec.Engine.(*EcsEngine)
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -280,7 +280,7 @@ func RegisterTaskFamily(stack Lsdc2Stack, spec ServerSpec, env map[string]string
 
 	input := &ecs.RegisterTaskDefinitionInput{
 		Tags:                    ecsTags(map[string]string{"lsdc2.gamename": spec.Name}),
-		Family:                  aws.String(taskFamily),
+		Family:                  getTaskFamily(stack, serverName),
 		Cpu:                     aws.String(ecsSpec.Cpu),
 		Memory:                  aws.String(ecsSpec.Memory),
 		NetworkMode:             ecsTypes.NetworkModeAwsvpc,
@@ -296,7 +296,7 @@ func RegisterTaskFamily(stack Lsdc2Stack, spec ServerSpec, env map[string]string
 				StopTimeout:  aws.Int32(120),
 				Essential:    aws.Bool(true),
 				Image:        aws.String(ecsSpec.Image),
-				Name:         aws.String(spec.Name + "_container"),
+				Name:         aws.String(serverName + "_container"),
 				Environment:  envArray,
 				PortMappings: spec.AwsPortSpec(),
 				LogConfiguration: &ecsTypes.LogConfiguration{
@@ -319,7 +319,7 @@ func RegisterTaskFamily(stack Lsdc2Stack, spec ServerSpec, env map[string]string
 }
 
 // DeregisterTaskFamily deregisters all task definitions within the specified ECS task family
-func DeregisterTaskFamily(taskFamily string) error {
+func DeregisterTaskFamily(stack Lsdc2Stack, serverName string) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return err
@@ -327,7 +327,7 @@ func DeregisterTaskFamily(taskFamily string) error {
 	client := ecs.NewFromConfig(cfg)
 
 	taskList, err := client.ListTaskDefinitions(context.TODO(), &ecs.ListTaskDefinitionsInput{
-		FamilyPrefix: aws.String(taskFamily),
+		FamilyPrefix: getTaskFamily(stack, serverName),
 	})
 	if err != nil {
 		return err
@@ -347,7 +347,7 @@ func DeregisterTaskFamily(taskFamily string) error {
 
 // StartEcsTask starts an ECS task for the provided family and security groupe.
 // Returns the ARN of the started task.
-func StartEcsTask(stack Lsdc2Stack, spec ServerSpec, taskFamily string) (arn string, err error) {
+func StartEcsTask(stack Lsdc2Stack, spec ServerSpec, serverName string) (arn string, err error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		return "", err
@@ -371,7 +371,7 @@ func StartEcsTask(stack Lsdc2Stack, spec ServerSpec, taskFamily string) (arn str
 				Subnets:        subnets,
 			},
 		},
-		TaskDefinition: aws.String(taskFamily),
+		TaskDefinition: getTaskFamily(stack, serverName),
 	})
 	if err != nil {
 		arn = ""
@@ -463,6 +463,11 @@ func GetEcsTaskIP(task ecsTypes.Task) (string, error) {
 	}
 
 	return *resultDni.NetworkInterfaces[0].Association.PublicIp, nil
+}
+
+// getTaskFamily implements the task family naming convention
+func getTaskFamily(stack Lsdc2Stack, serverName string) *string {
+	return aws.String(stack.EcsClusterName + "-" + serverName)
 }
 
 //===== Section: EC2

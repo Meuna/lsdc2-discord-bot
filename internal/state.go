@@ -339,11 +339,10 @@ func (srv Server) StartInstance(bot BotEnv) (Instance, error) {
 	maps.Copy(instEnvMap, srv.EnvMap)
 
 	if spec.EngineType == EcsEngineType {
-		taskFamily := taskFamily(srv.GuildID, srv.Name)
-		if err := RegisterTaskFamily(bot.Lsdc2Stack, spec, instEnvMap, taskFamily); err != nil {
+		if err := RegisterTaskFamily(bot.Lsdc2Stack, spec, instEnvMap, srv.Name); err != nil {
 			return Instance{}, fmt.Errorf("RegisterTask / %w", err)
 		}
-		taskArn, err := StartEcsTask(bot.Lsdc2Stack, spec, taskFamily)
+		taskArn, err := StartEcsTask(bot.Lsdc2Stack, spec, srv.Name)
 		if err != nil {
 			return Instance{}, fmt.Errorf("StartEcsTask / %w", err)
 		}
@@ -356,10 +355,6 @@ func (srv Server) StartInstance(bot BotEnv) (Instance, error) {
 		inst.EngineID = instanceID
 	}
 	return inst, nil
-}
-
-func taskFamily(guildID string, serverName string) string {
-	return fmt.Sprintf("lsdc2-%s-%s", guildID, serverName)
 }
 
 //===== Section: Instace
@@ -380,8 +375,7 @@ func (inst Instance) StopInstance(bot BotEnv) error {
 		if err := StopEcsTask(inst.EngineID, bot.Lsdc2Stack.EcsClusterName); err != nil {
 			return fmt.Errorf("StopEcsTask / %w", err)
 		}
-		taskFamily := taskFamily(inst.ServerGuildID, inst.ServerName)
-		if err := DeregisterTaskFamily(taskFamily); err != nil {
+		if err := inst.DeregisterTaskFamily(bot); err != nil {
 			return fmt.Errorf("DeregisterTaskFamily / %w", err)
 		}
 	} else {
@@ -394,8 +388,7 @@ func (inst Instance) StopInstance(bot BotEnv) error {
 }
 
 func (inst Instance) DeregisterTaskFamily(bot BotEnv) error {
-	taskFamily := taskFamily(inst.ServerGuildID, inst.ServerName)
-	return DeregisterTaskFamily(taskFamily)
+	return DeregisterTaskFamily(bot.Lsdc2Stack, inst.ServerName)
 }
 
 type InstanceState string
