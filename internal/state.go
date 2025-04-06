@@ -328,8 +328,9 @@ func (srv Server) StartInstance(bot BotEnv) (Instance, error) {
 
 	// Build the instance environment
 	instEnvMap := map[string]string{
-		"LSDC2_BUCKET":    bot.Bucket,
 		"LSDC2_QUEUE_URL": bot.QueueUrl,
+		"LSDC2_LOG_GROUP": bot.LogGroup,
+		"LSDC2_BUCKET":    bot.Bucket,
 		"LSDC2_SERVER":    srv.Name,
 		"DEBUG":           os.Getenv("DEBUG"),
 	}
