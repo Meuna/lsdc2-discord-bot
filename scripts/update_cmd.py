@@ -31,4 +31,5 @@ for cmd in jbody:
         # do somthing with cmd
         url = f"https://discord.com/api/v10/applications/{app}/guilds/{guild_id}/commands/{cmd['id']}"
         r = requests.patch(url, headers=headers, json=cmd)
+        print("UPDATE result: ", r.content)
         break

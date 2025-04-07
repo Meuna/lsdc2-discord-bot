@@ -34,7 +34,8 @@ type Lsdc2Stack struct {
 	Subnets             []string `env:"SUBNETS" envSeparator:";"`
 	LogGroup            string   `env:"LOG_GROUP"`
 	Bucket              string   `env:"SAVEGAME_BUCKET"`
-	SpecTable           string   `env:"SPEC_TABLE"`
+	ServerSpecTable     string   `env:"SERVER_SPEC_TABLE"`
+	ServerTierTable     string   `env:"SERVER_TIER_TABLE"`
 	GuildTable          string   `env:"GUILD_TABLE"`
 	ServerTable         string   `env:"SERVER_TABLE"`
 	InstanceTable       string   `env:"INSTANCE_TABLE"`
@@ -78,6 +79,32 @@ func InitBot() (BotEnv, error) {
 	return bot, nil
 }
 
+//===== Section: ServerTier
+
+type ServerTier struct {
+	Name          string                  `json:"name" dynamodbav:"key"`
+	Cpu           string                  `json:"cpu"`
+	Memory        string                  `json:"memory"`
+	InstanceTypes []ec2Types.InstanceType `json:"instanceTypes"`
+}
+
+func (st ServerTier) MissingField() []string {
+	missingFields := []string{}
+	if st.Name == "" {
+		missingFields = append(missingFields, "name")
+	}
+	if st.Cpu == "" {
+		missingFields = append(missingFields, "cpu")
+	}
+	if st.Memory == "" {
+		missingFields = append(missingFields, "memory")
+	}
+	if len(st.InstanceTypes) == 0 {
+		missingFields = append(missingFields, "instanceTypes")
+	}
+	return missingFields
+}
+
 //===== Section: ServerSpec
 
 type EngineType string
@@ -87,8 +114,10 @@ const (
 	Ec2EngineType EngineType = "ec2"
 )
 
+// TODO: add interfaces to remove all the type switches
 type Engine interface {
 	MissingField() []string
+	ApplyServerTier(ServerTier)
 }
 
 type EcsEngine struct {
@@ -114,6 +143,15 @@ func (e EcsEngine) MissingField() []string {
 	return missingFields
 }
 
+func (e *EcsEngine) ApplyServerTier(tier ServerTier) {
+	if tier.Cpu != "" {
+		e.Cpu = tier.Cpu
+	}
+	if tier.Memory != "" {
+		e.Memory = tier.Memory
+	}
+}
+
 type Ec2Engine struct {
 	Ami           string                  `json:"ami"`
 	InstanceTypes []ec2Types.InstanceType `json:"instanceTypes"`
@@ -132,6 +170,12 @@ func (e Ec2Engine) MissingField() []string {
 		missingFields = append(missingFields, "instanceTypes")
 	}
 	return missingFields
+}
+
+func (e *Ec2Engine) ApplyServerTier(tier ServerTier) {
+	if len(tier.InstanceTypes) > 0 {
+		e.InstanceTypes = tier.InstanceTypes
+	}
 }
 
 // TODO: implement a PortAndProtocol struct in case ECS allow for udp+tcp port forward
@@ -309,11 +353,16 @@ type Server struct {
 	EnvMap    map[string]string
 }
 
-func (srv Server) StartInstance(bot BotEnv) (Instance, error) {
+func (srv Server) StartInstance(bot BotEnv, srvTier ServerTier) (Instance, error) {
 	// Get the game spec
 	spec := ServerSpec{}
-	if err := DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec); err != nil {
+	if err := DynamodbGetItem(bot.ServerSpecTable, srv.SpecName, &spec); err != nil {
 		return Instance{}, fmt.Errorf("StartTask / %w", err)
+	}
+
+	// Apply the optional server tier
+	if srvTier.Name != "" {
+		spec.Engine.ApplyServerTier(srvTier)
 	}
 
 	// Prepare instance entry

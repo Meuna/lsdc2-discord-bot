@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go/aws/session"
 	s3v1 "github.com/aws/aws-sdk-go/service/s3" // FIXME: remove and use SDK v2 when it is able to presign completed multipart upload
+	"github.com/aws/smithy-go"
 )
 
 //===== Section: SSM
@@ -472,6 +473,12 @@ func getTaskFamily(stack Lsdc2Stack, serverName string) *string {
 
 //===== Section: EC2
 
+type instanceTypeAndSubnet struct {
+	InstanceType ec2Types.InstanceType
+	Subnet       string
+	Price        float64
+}
+
 // Default EC2 tag value
 func ec2Tags(resourceType ec2Types.ResourceType, tagMap map[string]string) []ec2Types.TagSpecification {
 
@@ -494,7 +501,7 @@ func ec2Tags(resourceType ec2Types.ResourceType, tagMap map[string]string) []ec2
 
 // StartEc2VM starts a new EC2 instance for the provided server spec.
 // Returns the ID of the started instance.
-func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (instanceID string, err error) {
+func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (string, error) {
 	ec2Spec, ok := spec.Engine.(*Ec2Engine)
 	if !ok {
 		return "", errors.New("engine spec is not an EC2 engine")
@@ -521,7 +528,7 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 	userDatab64 := base64.StdEncoding.EncodeToString([]byte(userDataScript))
 
 	// Get cheapest subnet
-	instanceType, subnet, err := GetCheapestInstanceType(stack, ec2Spec.InstanceTypes)
+	instanceTypeAndSubnetsFromCheapest, err := GetInstanceTypeAndSubnetSortedByPrice(stack, ec2Spec.InstanceTypes)
 	if err != nil {
 		return "", err
 	}
@@ -532,44 +539,67 @@ func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (insta
 	}
 	client := ec2.NewFromConfig(cfg)
 
-	input := &ec2.RunInstancesInput{
-		ImageId: aws.String(amiID),
-		IamInstanceProfile: &ec2Types.IamInstanceProfileSpecification{
-			Arn: aws.String(stack.Ec2VMProfileArn),
-		},
-		BlockDeviceMappings: []ec2Types.BlockDeviceMapping{
-			{
-				DeviceName: aws.String("/dev/sda1"),
-				Ebs: &ec2Types.EbsBlockDevice{
-					VolumeType: ec2Types.VolumeTypeGp3,
-					Iops:       aws.Int32(min(max(3000, ec2Spec.Iops), 6000)),
-					Throughput: aws.Int32(min(max(125, ec2Spec.Throughput), 600)),
+	startInstanceTypeAndSubnet := func(instAndSn instanceTypeAndSubnet) (string, error) {
+		result, err := client.RunInstances(context.TODO(), &ec2.RunInstancesInput{
+			ImageId: aws.String(amiID),
+			IamInstanceProfile: &ec2Types.IamInstanceProfileSpecification{
+				Arn: aws.String(stack.Ec2VMProfileArn),
+			},
+			BlockDeviceMappings: []ec2Types.BlockDeviceMapping{
+				{
+					DeviceName: aws.String("/dev/sda1"),
+					Ebs: &ec2Types.EbsBlockDevice{
+						VolumeType: ec2Types.VolumeTypeGp3,
+						Iops:       aws.Int32(min(max(3000, ec2Spec.Iops), 6000)),
+						Throughput: aws.Int32(min(max(125, ec2Spec.Throughput), 600)),
+					},
 				},
 			},
-		},
-		InstanceMarketOptions: &ec2Types.InstanceMarketOptionsRequest{
-			MarketType: ec2Types.MarketTypeSpot,
-		},
-		InstanceType:      ec2Types.InstanceType(instanceType),
-		MaxCount:          aws.Int32(1),
-		MinCount:          aws.Int32(1),
-		SecurityGroupIds:  []string{spec.SecurityGroup},
-		SubnetId:          aws.String(subnet),
-		TagSpecifications: ec2Tags(ec2Types.ResourceTypeInstance, map[string]string{"lsdc2.gamename": spec.Name}),
-		UserData:          aws.String(userDatab64),
+			InstanceMarketOptions: &ec2Types.InstanceMarketOptionsRequest{
+				MarketType: ec2Types.MarketTypeSpot,
+			},
+			InstanceType:      instAndSn.InstanceType,
+			MaxCount:          aws.Int32(1),
+			MinCount:          aws.Int32(1),
+			SecurityGroupIds:  []string{spec.SecurityGroup},
+			SubnetId:          aws.String(instAndSn.Subnet),
+			TagSpecifications: ec2Tags(ec2Types.ResourceTypeInstance, map[string]string{"lsdc2.gamename": spec.Name}),
+			UserData:          aws.String(userDatab64),
+		})
+		if err != nil {
+			return "", err
+		}
+		if len(result.Instances) == 0 {
+			return "", errors.New("instance creation returned nil error but empty results")
+		}
+		return *result.Instances[0].InstanceId, nil
 	}
-	result, err := client.RunInstances(context.TODO(), input)
-	if err != nil {
-		return "", err
-	}
-	if len(result.Instances) == 0 {
-		instanceID = ""
-		return "", errors.New("instance creation returned empty results")
+	for _, instAndSn := range instanceTypeAndSubnetsFromCheapest {
+		instanceId, err := startInstanceTypeAndSubnet(instAndSn)
+
+		// This is the happy path, where we have an instance ID and no error
+		if err == nil {
+			return instanceId, nil
+		}
+
+		// This is the unplanned path, where the function fail
+		if !isInsufficientCapacityError(err) {
+			return "", err
+		}
+
+		// And here we loop while the error type is InsufficientCapacityError
 	}
 
-	instanceID = *result.Instances[0].InstanceId
-	err = nil
-	return
+	return "", errors.New("no instance started")
+}
+
+func isInsufficientCapacityError(err error) bool {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.ErrorCode() == "InsufficientInstanceCapacity"
+	}
+
+	return false
 }
 
 // SendCommand stops the specified EC2 instance
@@ -640,22 +670,25 @@ func GetAmiID(amiName string) (string, error) {
 	return *out.Images[0].ImageId, nil
 }
 
-func GetCheapestInstanceType(stack Lsdc2Stack, instanceTypes []ec2Types.InstanceType) (ec2Types.InstanceType, string, error) {
+// GetInstanceTypeAndSubnetSortedByPrice returns all the possible
+// instance type and subnet options, sorted by price
+func GetInstanceTypeAndSubnetSortedByPrice(stack Lsdc2Stack, instanceTypes []ec2Types.InstanceType) ([]instanceTypeAndSubnet, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	client := ec2.NewFromConfig(cfg)
 
+	// Get AZ from each subnet
 	outSubnets, err := client.DescribeSubnets(context.TODO(), &ec2.DescribeSubnetsInput{
 		SubnetIds: stack.Subnets,
 	})
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	bestPrice := math.Inf(1)
-	bestSubnet := stack.Subnets[0]
-	bestInstanceType := instanceTypes[0]
+
+	instAndSn := make([]instanceTypeAndSubnet, len(instanceTypes)*len(stack.Subnets))
+	idx := 0
 	for _, sn := range outSubnets.Subnets {
 		for _, instanceType := range instanceTypes {
 			out, err := client.DescribeSpotPriceHistory(context.TODO(), &ec2.DescribeSpotPriceHistoryInput{
@@ -666,27 +699,34 @@ func GetCheapestInstanceType(stack Lsdc2Stack, instanceTypes []ec2Types.Instance
 				MaxResults:          aws.Int32(1),
 			})
 			if err != nil {
-				return "", "", err
+				return nil, err
 			}
-			for _, sph := range out.SpotPriceHistory {
-				newBestPrice, err := strconv.ParseFloat(*sph.SpotPrice, 64)
+			if len(out.SpotPriceHistory) > 0 {
+				floatPrice, err := strconv.ParseFloat(*out.SpotPriceHistory[0].SpotPrice, 64)
 				if err != nil {
-					return "", "", err
+					return nil, err
 				}
-
-				if newBestPrice < bestPrice {
-					bestPrice = newBestPrice
-					bestSubnet = *sn.SubnetId
-					bestInstanceType = sph.InstanceType
+				instAndSn[idx] = instanceTypeAndSubnet{
+					InstanceType: out.SpotPriceHistory[0].InstanceType,
+					Subnet:       *sn.SubnetId,
+					Price:        floatPrice,
 				}
-
+				idx = idx + 1
 			}
 		}
 	}
 
-	return bestInstanceType, bestSubnet, nil
+	instAndSn = instAndSn[:idx]
+	sort.Slice(instAndSn, func(i, j int) bool {
+		return instAndSn[i].Price < instAndSn[j].Price
+	})
+
+	return instAndSn, nil
 }
 
+// RestoreEbsBaseline modify the volume performances of the provided instance
+// to the default gp3 values.
+// TODO: replace hard-coded default gp3 values with somethin more dynamic
 func RestoreEbsBaseline(instanceID string) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {

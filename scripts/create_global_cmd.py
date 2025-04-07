@@ -57,3 +57,14 @@ json_registergame = {
 }
 r = requests.post(url, headers=headers, json=json_registergame)
 print("REGISTER-GAME result: ", r.content)
+
+json_registerservertier = {
+    "name": "register-server-tier",
+    "type": CHAT_INPUT,
+    "description": "Add/update a server tier in the LSDC2 launcher",
+    "integration_types": [GUILD_INSTALL],
+    "contexts": [CTX_BOT_DM],
+    "default_member_permissions": ADMINISTRATOR_PERM,
+}
+r = requests.post(url, headers=headers, json=json_registerservertier)
+print("REGISTER-SERVER-TIER result: ", r.content)

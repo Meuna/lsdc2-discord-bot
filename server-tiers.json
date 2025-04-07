@@ -1,0 +1,32 @@
+[
+    {
+        "name": "2c2gb",
+        "cpu": "2 vCPU",
+        "memory": "2 GB",
+        "instanceTypes": ["t2.medium", "t2.large", "t3.small", "t3.medium", "t3.large", "t3a.small", "t3a.medium", "t3a.large"]
+    },
+    {
+        "name": "2c4gb",
+        "cpu": "2 vCPU",
+        "memory": "4 GB",
+        "instanceTypes": ["t2.medium", "t2.large", "t3.medium", "t3.large", "t3a.medium", "t3a.large", "m5.large", "m5a.large", "m5d.large", "m5ad.large", "m6a.large", "m6i.large", "m7i-flex.large", "m7i.large", "c5.large", "c5a.large", "c5d.large", "c6i.large", "c6in.large", "c7i-flex.large", "c7i.large"]
+    },
+    {
+        "name": "2c8gb",
+        "cpu": "2 vCPU",
+        "memory": "8 GB",
+        "instanceTypes": ["t2.large", "t3.large", "t3a.large", "m5.large", "m5a.large", "m5d.large", "m5ad.large", "m6a.large", "m6i.large", "m7i-flex.large", "m7i.large", "r5.large", "r5a.large", "r5d.large", "r5ad.large", "r6i.large", "r7i.large"]
+    },
+    {
+        "name": "2c16gb",
+        "cpu": "2 vCPU",
+        "memory": "16 GB",
+        "instanceTypes": ["t2.xlarge", "t3.xlarge", "t3a.xlarge", "m6a.xlarge", "m7i.xlarge", "c5a.xlarge", "r5.large", "r5a.large", "r5d.large", "r5ad.large", "r5n.large", "r6i.large", "r7i.large", "i4i.large"]
+    },
+    {
+        "name": "4c16gb",
+        "cpu": "4 vCPU",
+        "memory": "16 GB",
+        "instanceTypes": ["t2.xlarge", "t3.xlarge", "t3a.xlarge", "m5.xlarge", "m5a.xlarge", "m5d.xlarge", "m5ad.xlarge", "m6a.xlarge", "m6i.xlarge", "m7i.xlarge", "m7i-flex.xlarge", "r5.xlarge", "r5a.xlarge", "r5ad.xlarge", "r5d.xlarge", "r6i.xlarge", "r7i.xlarge"]
+    }
+]

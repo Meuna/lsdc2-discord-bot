@@ -208,6 +208,9 @@ func (bot Backend) routeApi(cmd internal.BackendCmd) {
 	case internal.RegisterGameAPI:
 		bot.registerGame(cmd)
 
+	case internal.RegisterServerTierAPI:
+		bot.registerServerTier(cmd)
+
 	case internal.WelcomeAPI:
 		bot.welcomeGuild(cmd)
 
@@ -265,7 +268,7 @@ func (bot Backend) routeInstanceNotification(cmd internal.BackendCmd) {
 	if args.Action == "server-ready" && inst.EngineType == internal.Ec2EngineType {
 		// Retrieve the server
 		spec := internal.ServerSpec{}
-		if err := internal.DynamodbGetItem(bot.SpecTable, inst.SpecName, &spec); err != nil {
+		if err := internal.DynamodbGetItem(bot.ServerSpecTable, inst.SpecName, &spec); err != nil {
 			bot.Logger.Error("error in routeInstanceNotification", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 			bot.message(inst.ThreadID, "🚫 Internal error")
 			return
@@ -308,14 +311,14 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	missingFields := spec.MissingField()
 	if len(missingFields) > 0 {
 		bot.Logger.Error("register game is missing fields", zap.Strings("missingFields", missingFields))
-		bot.followUp(cmd, "🚫 Spec if missing field %s", missingFields)
+		bot.followUp(cmd, "🚫 Spec is missing field %s", missingFields)
 		return
 	}
 
 	// Check existing spec and abort if user didn't set overwrite=true
 	bot.Logger.Debug("registering game: get previous spec version", zap.String("gameName", spec.Name))
 	previousSpec := internal.ServerSpec{}
-	if err = internal.DynamodbGetItem(bot.SpecTable, spec.Name, &previousSpec); err != nil {
+	if err = internal.DynamodbGetItem(bot.ServerSpecTable, spec.Name, &previousSpec); err != nil {
 		bot.Logger.Error("error in registerGame", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -347,7 +350,7 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 
 	// Finally, persist the spec in db
 	bot.Logger.Debug("registering game: persist spec", zap.Any("spec", spec))
-	err = internal.DynamodbPutItem(bot.SpecTable, spec)
+	err = internal.DynamodbPutItem(bot.ServerSpecTable, spec)
 	if err != nil {
 		bot.Logger.Error("error in registerGame", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
@@ -357,10 +360,7 @@ func (bot Backend) registerGame(cmd internal.BackendCmd) {
 	bot.followUp(cmd, "✅ %s register done !", spec.Name)
 }
 
-// _getSpec returns a ServerSpec based on the incommand command. It
-// handles the 2 cases permited by the frontend:
-//  1. An URL is provided, in which case the spec is fetched there
-//  2. The spec is directly provided from a modal
+// _getSpec returns a ServerSpec parsed from the incommand command
 func (bot Backend) _getSpec(args internal.RegisterGameArgs) (spec internal.ServerSpec, err error) {
 	var jsonSpec []byte
 
@@ -374,6 +374,73 @@ func (bot Backend) _getSpec(args internal.RegisterGameArgs) (spec internal.Serve
 	if err = json.Unmarshal(jsonSpec, &spec); err != nil {
 		err = fmt.Errorf("json.Unmarshal / %w", err)
 		return
+	}
+
+	return
+}
+
+//===== Section: server tier registering
+
+// registerGame handles the registration of a new game
+func (bot Backend) registerServerTier(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.RegisterServerTierArgs)
+	bot.Logger.Debug("received server tier register request", zap.Any("args", args))
+
+	// Retrieve list of ServerTier from the command
+	tiers, err := bot._getTiers(args)
+	if err != nil {
+		bot.Logger.Error("error in registerServerTier", zap.String("culprit", "_getTiers"), zap.Error(err))
+		bot.followUp(cmd, "🚫 Internal error")
+		return
+	}
+
+	// Check tiers are not missing any mandatory field
+	for _, tier := range tiers {
+		missingFields := tier.MissingField()
+		if len(missingFields) > 0 {
+			bot.Logger.Error("register tier is missing fields", zap.Strings("missingFields", missingFields))
+			bot.followUp(cmd, "🚫 Server tier is missing field %s", missingFields)
+			return
+		}
+	}
+
+	// Persist the tiers in db
+	for _, tier := range tiers {
+		bot.Logger.Debug("registering server tier: persist tier", zap.Any("tier", tier))
+		err = internal.DynamodbPutItem(bot.ServerTierTable, tier)
+		if err != nil {
+			bot.Logger.Error("error in registerServerTier", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
+			bot.followUp(cmd, "🚫 Internal error")
+			return
+		}
+	}
+
+	bot.followUp(cmd, "✅ %d server tiers register done !", len(tiers))
+}
+
+// _getTier returns a list of ServerTier parsed from the incommand command. It
+// handles the 2 following cases:
+//  1. The JSON provided is a list of ServerTier
+//  2. The JSON provided is a single ServerTier
+func (bot Backend) _getTiers(args internal.RegisterServerTierArgs) (tiers []internal.ServerTier, err error) {
+	var jsonSpec []byte
+
+	if len(args.Spec) == 0 {
+		err = fmt.Errorf("spec is empty")
+		return
+
+	}
+	jsonSpec = []byte(args.Spec)
+
+	// Tentative 1: with a list of server tiers
+	if err = json.Unmarshal(jsonSpec, &tiers); err != nil {
+		// Tentative 2: with a single server tier
+		tier := internal.ServerTier{}
+		if errWithSingle := json.Unmarshal(jsonSpec, &tier); errWithSingle != nil {
+			// If both fail, we report the list parsing error
+			err = fmt.Errorf("json.Unmarshal / %w", err)
+		}
+		tiers = []internal.ServerTier{tier}
 	}
 
 	return
@@ -429,7 +496,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 // spec count, for specific usage of server creation.
 func (bot Backend) _getSpecAndIncreaseCount(args internal.SpinupArgs) (spec internal.ServerSpec, err error) {
 	bot.Logger.Debug("spinupServer: get spec", zap.String("gameName", args.GameName))
-	if err = internal.DynamodbGetItem(bot.SpecTable, args.GameName, &spec); err != nil {
+	if err = internal.DynamodbGetItem(bot.ServerSpecTable, args.GameName, &spec); err != nil {
 		err = fmt.Errorf("DynamodbGetItem / %w", err)
 		return
 	}
@@ -440,7 +507,7 @@ func (bot Backend) _getSpecAndIncreaseCount(args internal.SpinupArgs) (spec inte
 
 	bot.Logger.Debug("spinupServer: increment spec count", zap.Any("spec", spec))
 	spec.ServerCount = spec.ServerCount + 1
-	if err = internal.DynamodbPutItem(bot.SpecTable, spec); err != nil {
+	if err = internal.DynamodbPutItem(bot.ServerSpecTable, spec); err != nil {
 		err = fmt.Errorf("DynamodbPutItem / %w", err)
 		return
 	}
@@ -522,7 +589,7 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 
 	// Get the game spec
 	spec := internal.ServerSpec{}
-	if err := internal.DynamodbGetItem(bot.SpecTable, srv.SpecName, &spec); err != nil {
+	if err := internal.DynamodbGetItem(bot.ServerSpecTable, srv.SpecName, &spec); err != nil {
 		bot.Logger.Error("error in confServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
@@ -596,6 +663,16 @@ func (bot Backend) startServer(cmd internal.BackendCmd) {
 		// No match == we can start a server
 	}
 
+	// Retrieve optional server tier
+	srvTier := internal.ServerTier{}
+	if args.ServerTier != "" {
+		if err := internal.DynamodbGetItem(bot.ServerTierTable, args.ServerTier, &srvTier); err != nil {
+			bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
+			bot.followUp(cmd, "🚫 Internal error")
+			return
+		}
+	}
+
 	// Start a dedicated thread
 	sess, _ := discordgo.New("Bot " + bot.Token)
 	thread, err := sess.ThreadStart(args.ChannelID, "🔵 Instance is starting ...", discordgo.ChannelTypeGuildPublicThread, 1440)
@@ -606,7 +683,7 @@ func (bot Backend) startServer(cmd internal.BackendCmd) {
 	}
 
 	// Start the task
-	inst, err := srv.StartInstance(bot.BotEnv)
+	inst, err := srv.StartInstance(bot.BotEnv, srvTier)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "StartTask"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")

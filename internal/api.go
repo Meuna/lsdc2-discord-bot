@@ -8,32 +8,28 @@ import (
 )
 
 const (
-	RegisterGameAPI = "register-game"
-	WelcomeAPI      = "welcome-guild"
-	GoodbyeAPI      = "goodbye-guild"
-	SpinupAPI       = "spinup"
-	ConfAPI         = "conf"
-	DestroyAPI      = "destroy"
-	InviteAPI       = "invite"
-	KickAPI         = "kick"
-	StartAPI        = "start"
-	StopAPI         = "stop"
-	StatusAPI       = "status"
-	DownloadAPI     = "download"
-	UploadAPI       = "upload"
-	TaskNotifyAPI   = "tasknotify"
+	RegisterGameAPI       = "register-game"
+	RegisterServerTierAPI = "register-server-tier"
+	WelcomeAPI            = "welcome-guild"
+	GoodbyeAPI            = "goodbye-guild"
+	SpinupAPI             = "spinup"
+	ConfAPI               = "conf"
+	DestroyAPI            = "destroy"
+	InviteAPI             = "invite"
+	KickAPI               = "kick"
+	StartAPI              = "start"
+	StopAPI               = "stop"
+	StatusAPI             = "status"
+	DownloadAPI           = "download"
+	UploadAPI             = "upload"
+	TaskNotifyAPI         = "tasknotify"
 )
 
 var (
-	OwnerCmd      = []string{RegisterGameAPI, WelcomeAPI, GoodbyeAPI}
+	OwnerCmd      = []string{RegisterGameAPI, RegisterServerTierAPI, WelcomeAPI, GoodbyeAPI}
 	AdminCmd      = []string{SpinupAPI, DestroyAPI, InviteAPI, KickAPI, ConfAPI}
 	InviteKickCmd = []string{InviteAPI, KickAPI}
 	UserCmd       = []string{StartAPI, StopAPI, StatusAPI, DownloadAPI, UploadAPI}
-)
-
-const (
-	RegisterGameAPISpecUrlOpt   string = "spec-url"
-	RegisterGameAPIOverwriteOpt string = "overwrite"
 )
 
 // Structure used to communicate bot intent between the frontend and the
@@ -70,6 +66,8 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 	switch aux.Api {
 	case RegisterGameAPI:
 		cmd.Args = &RegisterGameArgs{}
+	case RegisterServerTierAPI:
+		cmd.Args = &RegisterServerTierArgs{}
 	case WelcomeAPI:
 		cmd.Args = &WelcomeArgs{}
 	case GoodbyeAPI:
@@ -104,6 +102,8 @@ func (cmd BackendCmd) MarshalJSON() ([]byte, error) {
 	switch cmd.Args.(type) {
 	case *RegisterGameArgs, RegisterGameArgs:
 		cmd.Api = RegisterGameAPI
+	case *RegisterServerTierArgs, RegisterServerTierArgs:
+		cmd.Api = RegisterServerTierAPI
 	case *WelcomeArgs, WelcomeArgs:
 		cmd.Api = WelcomeAPI
 	case *GoodbyeArgs, GoodbyeArgs:
@@ -134,6 +134,10 @@ type RegisterGameArgs struct {
 	Overwrite bool
 }
 
+type RegisterServerTierArgs struct {
+	Spec string `json:",omitempty"`
+}
+
 type WelcomeArgs struct {
 	GuildID string
 }
@@ -154,7 +158,8 @@ type ConfArgs struct {
 }
 
 type StartArgs struct {
-	ChannelID string
+	ChannelID  string
+	ServerTier string
 }
 
 type DestroyArgs struct {
