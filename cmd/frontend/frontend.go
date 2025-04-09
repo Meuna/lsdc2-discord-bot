@@ -214,8 +214,8 @@ func (bot Frontend) routeCommand(itn discordgo.Interaction, request events.Lambd
 	switch acd.Name {
 	case internal.RegisterGameAPI:
 		return bot.gameRegisterFrontloop(itn)
-	case internal.RegisterServerTierAPI:
-		return bot.serverTierRegisterFrontloop(itn)
+	case internal.RegisterEngineTierAPI:
+		return bot.engineTierRegisterFrontloop(itn)
 	case internal.WelcomeAPI:
 		return bot.welcomeGuildFrontloop(itn)
 	case internal.GoodbyeAPI:
@@ -285,8 +285,8 @@ func (bot Frontend) routeModalSubmit(itn discordgo.Interaction) (events.APIGatew
 	switch cmd.Api {
 	case internal.RegisterGameAPI:
 		return bot.gameRegisterCall(itn)
-	case internal.RegisterServerTierAPI:
-		return bot.serverTierRegisterCall(itn)
+	case internal.RegisterEngineTierAPI:
+		return bot.engineTierRegisterCall(itn)
 	case internal.WelcomeAPI:
 		return bot.genericConfirmedCall(itn)
 	case internal.GoodbyeAPI:
@@ -351,11 +351,11 @@ func (bot Frontend) gameRegisterFrontloop(itn discordgo.Interaction) (events.API
 	return bot.textPrompt(cmd, "Register new game", "Paste LSDC2 json spec", `{"name": "gamename", "image": "repo/image:tag" ... }`)
 }
 
-// serverTierRegisterFrontloop is the first function triggered by a server tier
-// registration command. It returns a modal to prompt the user for the ServerTier.
-func (bot Frontend) serverTierRegisterFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
-	cmd := internal.BackendCmd{Args: &internal.RegisterServerTierArgs{}}
-	return bot.textPrompt(cmd, "Register server tier", "Paste LSDC2 json spec", `[{"name": "2c8gb", "cpu": "2 vCPU", ... }, ...]`)
+// engineTierRegisterFrontloop is the first function triggered by a engine tier
+// registration command. It returns a modal to prompt the user for the EngineTier.
+func (bot Frontend) engineTierRegisterFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	cmd := internal.BackendCmd{Args: &internal.RegisterEngineTierArgs{}}
+	return bot.textPrompt(cmd, "Register engine tier", "Paste LSDC2 json spec", `[{"name": "2c8gb", "cpu": "2 vCPU", ... }, ...]`)
 }
 
 // welcomeGuildFrontloop is the first function triggered by a guild welcoming
@@ -574,14 +574,14 @@ func (bot Frontend) gameRegisterCall(itn discordgo.Interaction) (events.APIGatew
 	return bot.ackMessage()
 }
 
-// serverTierRegisterCall is used as the step 2 of a frontloop, after the step 1
-// replied with a configuration modal for the ServerTier. The function
+// engineTierRegisterCall is used as the step 2 of a frontloop, after the step 1
+// replied with a configuration modal for the EngineTier. The function
 // gathers the prompted spec and call the backend.
-func (bot Frontend) serverTierRegisterCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+func (bot Frontend) engineTierRegisterCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
 	cmd, err := internal.UnmarshallCustomID(msd.CustomID)
 	if err != nil {
-		bot.Logger.Error("error in serverTierRegisterCall", zap.String("culprit", "UnmarshallCustomIDAction"), zap.Error(err))
+		bot.Logger.Error("error in engineTierRegisterCall", zap.String("culprit", "UnmarshallCustomIDAction"), zap.Error(err))
 		bot.reply("🚫 Internal error")
 	}
 	cmd.AppID = itn.AppID
@@ -590,12 +590,12 @@ func (bot Frontend) serverTierRegisterCall(itn discordgo.Interaction) (events.AP
 	item := msd.Components[0]
 	textInput := item.(*discordgo.ActionsRow).Components[0].(*discordgo.TextInput)
 
-	args := cmd.Args.(*internal.RegisterServerTierArgs)
+	args := cmd.Args.(*internal.RegisterEngineTierArgs)
 	args.Spec = textInput.Value
 	cmd.Args = args
 
 	if err := bot.callBackend(cmd); err != nil {
-		bot.Logger.Error("error in serverTierRegisterCall", zap.String("culprit", "callBackend"), zap.Error(err))
+		bot.Logger.Error("error in engineTierRegisterCall", zap.String("culprit", "callBackend"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
 	}
 	return bot.ackMessage()
@@ -641,7 +641,7 @@ func (bot Frontend) serverStartCall(itn discordgo.Interaction) (events.APIGatewa
 
 	// Get command arguments
 	if len(acd.Options) > 0 {
-		args.ServerTier = acd.Options[0].StringValue()
+		args.EngineTier = acd.Options[0].StringValue()
 	}
 
 	cmd := internal.BackendCmd{
@@ -923,7 +923,7 @@ func (bot Frontend) autocompleteSpinup() (events.APIGatewayProxyResponse, error)
 }
 
 // autocompleteStart returns an autocomplete response with the choices of
-// registered server tiers. Note that user inputs is completly ignored: it is not
+// registered engine tiers. Note that user inputs is completly ignored: it is not
 // used to filter the choices.
 // TODO: add a filter to the choices based on the user input
 func (bot Frontend) autocompleteStart() (events.APIGatewayProxyResponse, error) {
@@ -932,7 +932,7 @@ func (bot Frontend) autocompleteStart() (events.APIGatewayProxyResponse, error) 
 		return bot.replyAutocomplete(__startChoicesCache)
 	}
 
-	allTiers, err := internal.DynamodbScan[internal.ServerTier](bot.ServerTierTable)
+	allTiers, err := internal.DynamodbScan[internal.EngineTier](bot.EngineTierTable)
 	if err != nil {
 		return internal.Error500(), fmt.Errorf("DynamodbScan / %w", err)
 	}

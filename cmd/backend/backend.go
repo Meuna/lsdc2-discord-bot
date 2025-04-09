@@ -208,8 +208,8 @@ func (bot Backend) routeApi(cmd internal.BackendCmd) {
 	case internal.RegisterGameAPI:
 		bot.registerGame(cmd)
 
-	case internal.RegisterServerTierAPI:
-		bot.registerServerTier(cmd)
+	case internal.RegisterEngineTierAPI:
+		bot.registerEngineTier(cmd)
 
 	case internal.WelcomeAPI:
 		bot.welcomeGuild(cmd)
@@ -379,17 +379,17 @@ func (bot Backend) _getSpec(args internal.RegisterGameArgs) (spec internal.Serve
 	return
 }
 
-//===== Section: server tier registering
+//===== Section: engine tier registering
 
 // registerGame handles the registration of a new game
-func (bot Backend) registerServerTier(cmd internal.BackendCmd) {
-	args := *cmd.Args.(*internal.RegisterServerTierArgs)
-	bot.Logger.Debug("received server tier register request", zap.Any("args", args))
+func (bot Backend) registerEngineTier(cmd internal.BackendCmd) {
+	args := *cmd.Args.(*internal.RegisterEngineTierArgs)
+	bot.Logger.Debug("received engine tier register request", zap.Any("args", args))
 
-	// Retrieve list of ServerTier from the command
+	// Retrieve list of EngineTier from the command
 	tiers, err := bot._getTiers(args)
 	if err != nil {
-		bot.Logger.Error("error in registerServerTier", zap.String("culprit", "_getTiers"), zap.Error(err))
+		bot.Logger.Error("error in registerEngineTier", zap.String("culprit", "_getTiers"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
@@ -399,30 +399,30 @@ func (bot Backend) registerServerTier(cmd internal.BackendCmd) {
 		missingFields := tier.MissingField()
 		if len(missingFields) > 0 {
 			bot.Logger.Error("register tier is missing fields", zap.Strings("missingFields", missingFields))
-			bot.followUp(cmd, "🚫 Server tier is missing field %s", missingFields)
+			bot.followUp(cmd, "🚫 Engine tier is missing field %s", missingFields)
 			return
 		}
 	}
 
 	// Persist the tiers in db
 	for _, tier := range tiers {
-		bot.Logger.Debug("registering server tier: persist tier", zap.Any("tier", tier))
-		err = internal.DynamodbPutItem(bot.ServerTierTable, tier)
+		bot.Logger.Debug("registering engine tier: persist tier", zap.Any("tier", tier))
+		err = internal.DynamodbPutItem(bot.EngineTierTable, tier)
 		if err != nil {
-			bot.Logger.Error("error in registerServerTier", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
+			bot.Logger.Error("error in registerEngineTier", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))
 			bot.followUp(cmd, "🚫 Internal error")
 			return
 		}
 	}
 
-	bot.followUp(cmd, "✅ %d server tiers register done !", len(tiers))
+	bot.followUp(cmd, "✅ %d engine tiers register done !", len(tiers))
 }
 
-// _getTier returns a list of ServerTier parsed from the incommand command. It
+// _getTier returns a list of EngineTier parsed from the incommand command. It
 // handles the 2 following cases:
-//  1. The JSON provided is a list of ServerTier
-//  2. The JSON provided is a single ServerTier
-func (bot Backend) _getTiers(args internal.RegisterServerTierArgs) (tiers []internal.ServerTier, err error) {
+//  1. The JSON provided is a list of EngineTier
+//  2. The JSON provided is a single EngineTier
+func (bot Backend) _getTiers(args internal.RegisterEngineTierArgs) (tiers []internal.EngineTier, err error) {
 	var jsonSpec []byte
 
 	if len(args.Spec) == 0 {
@@ -432,15 +432,15 @@ func (bot Backend) _getTiers(args internal.RegisterServerTierArgs) (tiers []inte
 	}
 	jsonSpec = []byte(args.Spec)
 
-	// Tentative 1: with a list of server tiers
+	// Tentative 1: with a list of engine tiers
 	if err = json.Unmarshal(jsonSpec, &tiers); err != nil {
-		// Tentative 2: with a single server tier
-		tier := internal.ServerTier{}
+		// Tentative 2: with a single engine tier
+		tier := internal.EngineTier{}
 		if errWithSingle := json.Unmarshal(jsonSpec, &tier); errWithSingle != nil {
 			// If both fail, we report the list parsing error
 			err = fmt.Errorf("json.Unmarshal / %w", err)
 		}
-		tiers = []internal.ServerTier{tier}
+		tiers = []internal.EngineTier{tier}
 	}
 
 	return
@@ -663,10 +663,10 @@ func (bot Backend) startServer(cmd internal.BackendCmd) {
 		// No match == we can start a server
 	}
 
-	// Retrieve optional server tier
-	srvTier := internal.ServerTier{}
-	if args.ServerTier != "" {
-		if err := internal.DynamodbGetItem(bot.ServerTierTable, args.ServerTier, &srvTier); err != nil {
+	// Retrieve optional engine tier
+	engineTier := internal.EngineTier{}
+	if args.EngineTier != "" {
+		if err := internal.DynamodbGetItem(bot.EngineTierTable, args.EngineTier, &engineTier); err != nil {
 			bot.Logger.Error("error in startServer", zap.String("culprit", "DynamodbGetItem"), zap.Error(err))
 			bot.followUp(cmd, "🚫 Internal error")
 			return
@@ -683,7 +683,7 @@ func (bot Backend) startServer(cmd internal.BackendCmd) {
 	}
 
 	// Start the task
-	inst, err := srv.StartInstance(bot.BotEnv, srvTier)
+	inst, err := srv.StartInstance(bot.BotEnv, engineTier)
 	if err != nil {
 		bot.Logger.Error("error in startServer", zap.String("culprit", "StartTask"), zap.Error(err))
 		bot.followUp(cmd, "🚫 Internal error")
@@ -701,8 +701,8 @@ func (bot Backend) startServer(cmd internal.BackendCmd) {
 	}
 
 	followUp := "Server starting (wait few minutes)"
-	if args.ServerTier != "" {
-		followUp = fmt.Sprintf("Server starting with engine tier %s (wait few minutes)", args.ServerTier)
+	if args.EngineTier != "" {
+		followUp = fmt.Sprintf("Server starting with engine tier %s (wait few minutes)", args.EngineTier)
 	}
 	bot.followUp(cmd, followUp)
 }

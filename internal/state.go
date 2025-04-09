@@ -35,7 +35,7 @@ type Lsdc2Stack struct {
 	LogGroup            string   `env:"LOG_GROUP"`
 	Bucket              string   `env:"SAVEGAME_BUCKET"`
 	ServerSpecTable     string   `env:"SERVER_SPEC_TABLE"`
-	ServerTierTable     string   `env:"SERVER_TIER_TABLE"`
+	EngineTierTable     string   `env:"ENGINE_TIER_TABLE"`
 	GuildTable          string   `env:"GUILD_TABLE"`
 	ServerTable         string   `env:"SERVER_TABLE"`
 	InstanceTable       string   `env:"INSTANCE_TABLE"`
@@ -79,16 +79,16 @@ func InitBot() (BotEnv, error) {
 	return bot, nil
 }
 
-//===== Section: ServerTier
+//===== Section: EngineTier
 
-type ServerTier struct {
+type EngineTier struct {
 	Name          string                  `json:"name" dynamodbav:"key"`
 	Cpu           string                  `json:"cpu"`
 	Memory        string                  `json:"memory"`
 	InstanceTypes []ec2Types.InstanceType `json:"instanceTypes"`
 }
 
-func (st ServerTier) MissingField() []string {
+func (st EngineTier) MissingField() []string {
 	missingFields := []string{}
 	if st.Name == "" {
 		missingFields = append(missingFields, "name")
@@ -117,7 +117,7 @@ const (
 // TODO: add interfaces to remove all the type switches
 type Engine interface {
 	MissingField() []string
-	ApplyServerTier(ServerTier)
+	ApplyEngineTier(EngineTier)
 }
 
 type EcsEngine struct {
@@ -143,7 +143,7 @@ func (e EcsEngine) MissingField() []string {
 	return missingFields
 }
 
-func (e *EcsEngine) ApplyServerTier(tier ServerTier) {
+func (e *EcsEngine) ApplyEngineTier(tier EngineTier) {
 	if tier.Cpu != "" {
 		e.Cpu = tier.Cpu
 	}
@@ -172,7 +172,7 @@ func (e Ec2Engine) MissingField() []string {
 	return missingFields
 }
 
-func (e *Ec2Engine) ApplyServerTier(tier ServerTier) {
+func (e *Ec2Engine) ApplyEngineTier(tier EngineTier) {
 	if len(tier.InstanceTypes) > 0 {
 		e.InstanceTypes = tier.InstanceTypes
 	}
@@ -353,16 +353,16 @@ type Server struct {
 	EnvMap    map[string]string
 }
 
-func (srv Server) StartInstance(bot BotEnv, srvTier ServerTier) (Instance, error) {
+func (srv Server) StartInstance(bot BotEnv, srvTier EngineTier) (Instance, error) {
 	// Get the game spec
 	spec := ServerSpec{}
 	if err := DynamodbGetItem(bot.ServerSpecTable, srv.SpecName, &spec); err != nil {
 		return Instance{}, fmt.Errorf("StartTask / %w", err)
 	}
 
-	// Apply the optional server tier
+	// Apply the optional engine tier
 	if srvTier.Name != "" {
-		spec.Engine.ApplyServerTier(srvTier)
+		spec.Engine.ApplyEngineTier(srvTier)
 	}
 
 	// Prepare instance entry

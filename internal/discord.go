@@ -106,8 +106,8 @@ var __guildsCommands = []*discordgo.ApplicationCommand{
 		Description: "Start a server instance (run in server channel)",
 		Options: []*discordgo.ApplicationCommandOption{
 			{
-				Name:         "server-tier",
-				Description:  "Use a specific server tier instead of the game default",
+				Name:         "engine-tier",
+				Description:  "Use a specific engine tier instead of the game default",
 				Required:     false,
 				Type:         discordgo.ApplicationCommandOptionString,
 				Autocomplete: true,

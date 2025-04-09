@@ -9,7 +9,7 @@ import (
 
 const (
 	RegisterGameAPI       = "register-game"
-	RegisterServerTierAPI = "register-server-tier"
+	RegisterEngineTierAPI = "register-engine-tier"
 	WelcomeAPI            = "welcome-guild"
 	GoodbyeAPI            = "goodbye-guild"
 	SpinupAPI             = "spinup"
@@ -26,7 +26,7 @@ const (
 )
 
 var (
-	OwnerCmd      = []string{RegisterGameAPI, RegisterServerTierAPI, WelcomeAPI, GoodbyeAPI}
+	OwnerCmd      = []string{RegisterGameAPI, RegisterEngineTierAPI, WelcomeAPI, GoodbyeAPI}
 	AdminCmd      = []string{SpinupAPI, DestroyAPI, InviteAPI, KickAPI, ConfAPI}
 	InviteKickCmd = []string{InviteAPI, KickAPI}
 	UserCmd       = []string{StartAPI, StopAPI, StatusAPI, DownloadAPI, UploadAPI}
@@ -66,8 +66,8 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 	switch aux.Api {
 	case RegisterGameAPI:
 		cmd.Args = &RegisterGameArgs{}
-	case RegisterServerTierAPI:
-		cmd.Args = &RegisterServerTierArgs{}
+	case RegisterEngineTierAPI:
+		cmd.Args = &RegisterEngineTierArgs{}
 	case WelcomeAPI:
 		cmd.Args = &WelcomeArgs{}
 	case GoodbyeAPI:
@@ -102,8 +102,8 @@ func (cmd BackendCmd) MarshalJSON() ([]byte, error) {
 	switch cmd.Args.(type) {
 	case *RegisterGameArgs, RegisterGameArgs:
 		cmd.Api = RegisterGameAPI
-	case *RegisterServerTierArgs, RegisterServerTierArgs:
-		cmd.Api = RegisterServerTierAPI
+	case *RegisterEngineTierArgs, RegisterEngineTierArgs:
+		cmd.Api = RegisterEngineTierAPI
 	case *WelcomeArgs, WelcomeArgs:
 		cmd.Api = WelcomeAPI
 	case *GoodbyeArgs, GoodbyeArgs:
@@ -134,7 +134,7 @@ type RegisterGameArgs struct {
 	Overwrite bool
 }
 
-type RegisterServerTierArgs struct {
+type RegisterEngineTierArgs struct {
 	Spec string `json:",omitempty"`
 }
 
@@ -159,7 +159,7 @@ type ConfArgs struct {
 
 type StartArgs struct {
 	ChannelID  string
-	ServerTier string
+	EngineTier string
 }
 
 type DestroyArgs struct {
