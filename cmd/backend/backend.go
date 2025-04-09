@@ -699,7 +699,12 @@ func (bot Backend) startServer(cmd internal.BackendCmd) {
 		bot.followUp(cmd, "🚫 Internal error")
 		return
 	}
-	bot.followUp(cmd, "Server starting (wait few minutes)")
+
+	followUp := "Server starting (wait few minutes)"
+	if args.ServerTier != "" {
+		followUp = fmt.Sprintf("Server starting with engine tier %s (wait few minutes)", args.ServerTier)
+	}
+	bot.followUp(cmd, followUp)
 }
 
 //===== Section: server destroy
