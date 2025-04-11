@@ -480,7 +480,7 @@ func (bot Backend) spinupServer(cmd internal.BackendCmd) {
 		Name:      srvName,
 		SpecName:  spec.Name,
 		ChannelID: chanID,
-		EnvMap:    args.Env,
+		Env:       args.Env,
 	}
 	bot.Logger.Debug("spinupServer: register server", zap.Any("srv", srv))
 	if err = internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
@@ -596,7 +596,7 @@ func (bot Backend) confServer(cmd internal.BackendCmd) {
 	}
 
 	// Reset server env
-	srv.EnvMap = args.Env
+	srv.Env = args.Env
 	bot.Logger.Debug("confServer: update server entry", zap.Any("srv", srv))
 	if err := internal.DynamodbPutItem(bot.ServerTable, srv); err != nil {
 		bot.Logger.Error("error in spinupServer", zap.String("culprit", "DynamodbPutItem"), zap.Error(err))

@@ -201,8 +201,8 @@ func (e *Ec2Engine) StartInstance(bot BotEnv, spec ServerSpec, env map[string]st
 type ServerSpec struct {
 	Name          string             `json:"name" dynamodbav:"key"`
 	Ingress       map[string][]int32 `json:"ingress"`
-	EnvMap        map[string]string  `json:"envMap"`
-	EnvParamMap   map[string]string  `json:"envParamMap"`
+	Env           map[string]string  `json:"env"`
+	Params        map[string]string  `json:"params"`
 	SecurityGroup string             `json:"securityGroup"`
 	ServerCount   int                `json:"severCount"`
 	EngineType    EngineType         `json:"engineType"`
@@ -383,7 +383,7 @@ type Server struct {
 	GuildID   string
 	Name      string
 	SpecName  string
-	EnvMap    map[string]string
+	Env       map[string]string
 }
 
 func (srv Server) StartInstance(bot BotEnv, srvTier EngineTier) (Instance, error) {
@@ -416,10 +416,10 @@ func (srv Server) StartInstance(bot BotEnv, srvTier EngineTier) (Instance, error
 		"LSDC2_SERVER":    srv.Name,
 		"DEBUG":           os.Getenv("DEBUG"),
 	}
-	if spec.EnvMap != nil {
-		maps.Copy(env, spec.EnvMap)
+	if spec.Env != nil {
+		maps.Copy(env, spec.Env)
 	}
-	maps.Copy(env, srv.EnvMap)
+	maps.Copy(env, srv.Env)
 
 	engineId, err := spec.Engine.StartInstance(bot, spec, env, srv.Name)
 	if err != nil {

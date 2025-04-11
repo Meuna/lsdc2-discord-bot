@@ -387,7 +387,7 @@ func (bot Frontend) guildGoodbyeFrontloop(itn discordgo.Interaction) (events.API
 // serverCreationFrontloop is the first function triggered by a server creation
 // command. The function fetch the game spec details from DynamoDB table then
 // branches between 2 cases:
-//  1. If the spec requires parameters (as defined by the EnvParamMap field),
+//  1. If the spec requires parameters (as defined by the Params field),
 //     the handler reply with a modal to prompt the parameters from the users.
 //  2. Else, skip the frontloop and directly calls the backend service to
 //     create the server.
@@ -412,7 +412,7 @@ func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.A
 		},
 	}
 
-	if len(spec.EnvParamMap) > 0 {
+	if len(spec.Params) > 0 {
 		// The server requires variables: reply with a modal (frontloop)
 		return bot._configurationModal(cmd, spec)
 	} else {
@@ -430,7 +430,7 @@ func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.A
 // serverConfigurationFrontloop is the first function triggered by a server conf
 // command. The function fetch the game spec details from DynamoDB table then
 // branches between 2 cases:
-//  1. If the spec requires parameters (as defined by the EnvParamMap field),
+//  1. If the spec requires parameters (as defined by the Params field),
 //     the handler reply with a modal to prompt the parameters from the users.
 //  2. Else, skip the frontloop and reply that the server does not require conf.
 func (bot Frontend) serverConfigurationFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
@@ -459,7 +459,7 @@ func (bot Frontend) serverConfigurationFrontloop(itn discordgo.Interaction) (eve
 		},
 	}
 
-	if len(spec.EnvParamMap) > 0 {
+	if len(spec.Params) > 0 {
 		// The server requires variables: reply with a modal (frontloop)
 		return bot._configurationModal(cmd, spec)
 	} else {
@@ -502,12 +502,12 @@ func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (event
 
 // TODO: improve the modal to enable advance configration
 func (bot Frontend) _configurationModal(cmd internal.BackendCmd, spec internal.ServerSpec) (events.APIGatewayProxyResponse, error) {
-	paramSpec := make(map[string]string, len(spec.EnvParamMap))
-	for env, label := range spec.EnvParamMap {
-		paramSpec[env] = label
+	paramsSpec := make(map[string]string, len(spec.Params))
+	for env, label := range spec.Params {
+		paramsSpec[env] = label
 	}
 	title := fmt.Sprintf("Configure %s server", spec.Name)
-	return bot.modal(cmd, title, paramSpec)
+	return bot.modal(cmd, title, paramsSpec)
 }
 
 //===== Section: backend call
