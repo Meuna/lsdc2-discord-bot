@@ -311,9 +311,9 @@ func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGate
 
 	switch acd.Name {
 	case internal.SpinupAPI:
-		return bot.autocompleteSpinup()
+		return bot.autocompleteSpinup(acd.Options)
 	case internal.StartAPI:
-		return bot.autocompleteStart()
+		return bot.autocompleteStart(acd.Options)
 	default:
 		return internal.Error500(), fmt.Errorf("unexpected autocomplete request for '%s'", acd.Name)
 	}
@@ -887,71 +887,83 @@ func (bot Frontend) savegameUpload(itn discordgo.Interaction, botDomain string) 
 
 // Cache of the choices between lambda calls
 // A bit hacky but it's a cheap way to avoid a table scan at each call
-var __spinupChoicesCache []*discordgo.ApplicationCommandOptionChoice
-var __startChoicesCache []*discordgo.ApplicationCommandOptionChoice
+var __spinupScanCache []internal.ServerSpec
+var __startScanCache []internal.EngineTier
 
 // autocompleteSpinup returns an autocomplete response with the choices of
 // registered games. Note that user inputs is completly ignored: it is not
 // used to filter the choices.
-// TODO: add a filter to the choices based on the user input
-func (bot Frontend) autocompleteSpinup() (events.APIGatewayProxyResponse, error) {
-	// Fast-track the cached reply
-	if __spinupChoicesCache != nil {
-		return bot.replyAutocomplete(__spinupChoicesCache)
+func (bot Frontend) autocompleteSpinup(opt []*discordgo.ApplicationCommandInteractionDataOption) (events.APIGatewayProxyResponse, error) {
+	var allSpec []internal.ServerSpec
+
+	// Check for cache hit
+	if __spinupScanCache != nil {
+		allSpec = __spinupScanCache
+	} else {
+		var err error
+		allSpec, err = internal.DynamodbScan[internal.ServerSpec](bot.ServerSpecTable)
+		if err != nil {
+			return internal.Error500(), fmt.Errorf("DynamodbScan / %w", err)
+		}
+		sort.Slice(allSpec, func(i, j int) bool {
+			return allSpec[i].Name < allSpec[j].Name
+		})
+		__spinupScanCache = allSpec
 	}
 
-	allSpec, err := internal.DynamodbScan[internal.ServerSpec](bot.ServerSpecTable)
-	if err != nil {
-		return internal.Error500(), fmt.Errorf("DynamodbScan / %w", err)
-	}
-
-	sort.Slice(allSpec, func(i, j int) bool {
-		return allSpec[i].Name < allSpec[j].Name
-	})
+	partialValue := opt[0].StringValue()
 
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(allSpec))
-	for idx, item := range allSpec {
-		choices[idx] = &discordgo.ApplicationCommandOptionChoice{
-			Name:  item.Name, // This is the value displayed to the user
-			Value: item.Name, // This is the value sent to the command
+	idx := 0
+	for _, item := range allSpec {
+		if partialValue == "" || strings.Contains(item.Name, partialValue) {
+			choices[idx] = &discordgo.ApplicationCommandOptionChoice{
+				Name:  item.Name, // This is the value displayed to the user
+				Value: item.Name, // This is the value sent to the command
+			}
+			idx = idx + 1
 		}
 	}
 
-	__spinupChoicesCache = choices
-
-	return bot.replyAutocomplete(choices)
+	return bot.replyAutocomplete(choices[:idx])
 }
 
 // autocompleteStart returns an autocomplete response with the choices of
 // registered engine tiers. Note that user inputs is completly ignored: it is not
 // used to filter the choices.
-// TODO: add a filter to the choices based on the user input
-func (bot Frontend) autocompleteStart() (events.APIGatewayProxyResponse, error) {
-	// Fast-track the cached reply
-	if __startChoicesCache != nil {
-		return bot.replyAutocomplete(__startChoicesCache)
+func (bot Frontend) autocompleteStart(opt []*discordgo.ApplicationCommandInteractionDataOption) (events.APIGatewayProxyResponse, error) {
+	var allTiers []internal.EngineTier
+
+	// Check for cache hit
+	if __startScanCache != nil {
+		allTiers = __startScanCache
+	} else {
+		var err error
+		allTiers, err = internal.DynamodbScan[internal.EngineTier](bot.EngineTierTable)
+		if err != nil {
+			return internal.Error500(), fmt.Errorf("DynamodbScan / %w", err)
+		}
+		sort.Slice(allTiers, func(i, j int) bool {
+			return allTiers[i].Name < allTiers[j].Name
+		})
+		__startScanCache = allTiers
 	}
 
-	allTiers, err := internal.DynamodbScan[internal.EngineTier](bot.EngineTierTable)
-	if err != nil {
-		return internal.Error500(), fmt.Errorf("DynamodbScan / %w", err)
-	}
-
-	sort.Slice(allTiers, func(i, j int) bool {
-		return allTiers[i].Name < allTiers[j].Name
-	})
+	partialValue := opt[0].StringValue()
 
 	choices := make([]*discordgo.ApplicationCommandOptionChoice, len(allTiers))
-	for idx, item := range allTiers {
-		choices[idx] = &discordgo.ApplicationCommandOptionChoice{
-			Name:  item.Name, // This is the value displayed to the user
-			Value: item.Name, // This is the value sent to the command
+	idx := 0
+	for _, item := range allTiers {
+		if partialValue == "" || strings.Contains(item.Name, partialValue) {
+			choices[idx] = &discordgo.ApplicationCommandOptionChoice{
+				Name:  item.Name, // This is the value displayed to the user
+				Value: item.Name, // This is the value sent to the command
+			}
+			idx = idx + 1
 		}
 	}
 
-	__startChoicesCache = choices
-
-	return bot.replyAutocomplete(choices)
+	return bot.replyAutocomplete(choices[:idx])
 }
 
 //===== Section: bot reply helpers
