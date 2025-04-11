@@ -113,10 +113,10 @@ const (
 	Ec2EngineType EngineType = "ec2"
 )
 
-// TODO: add interfaces to remove all the type switches
 type Engine interface {
 	MissingField() []string
 	ApplyEngineTier(EngineTier)
+	StartInstance(BotEnv, ServerSpec, map[string]string, string) (string, error)
 }
 
 type EcsEngine struct {
@@ -142,6 +142,8 @@ func (e EcsEngine) MissingField() []string {
 	return missingFields
 }
 
+// ApplyEngineTier set the Cpu and Memory fields from
+// the provided EngineTier
 func (e *EcsEngine) ApplyEngineTier(tier EngineTier) {
 	if tier.Cpu != "" {
 		e.Cpu = tier.Cpu
@@ -149,6 +151,18 @@ func (e *EcsEngine) ApplyEngineTier(tier EngineTier) {
 	if tier.Memory != "" {
 		e.Memory = tier.Memory
 	}
+}
+
+// StartInstance register an ECS task family and start a task
+func (e *EcsEngine) StartInstance(bot BotEnv, spec ServerSpec, env map[string]string, serverName string) (string, error) {
+	if err := RegisterTaskFamily(bot.Lsdc2Stack, spec, env, serverName); err != nil {
+		return "", fmt.Errorf("RegisterTask / %w", err)
+	}
+	taskArn, err := StartEcsTask(bot.Lsdc2Stack, spec, serverName)
+	if err != nil {
+		return "", fmt.Errorf("StartEcsTask / %w", err)
+	}
+	return taskArn, nil
 }
 
 type Ec2Engine struct {
@@ -171,10 +185,17 @@ func (e Ec2Engine) MissingField() []string {
 	return missingFields
 }
 
+// ApplyEngineTier set the InstanceTypes field from
+// the provided EngineTier
 func (e *Ec2Engine) ApplyEngineTier(tier EngineTier) {
 	if len(tier.InstanceTypes) > 0 {
 		e.InstanceTypes = tier.InstanceTypes
 	}
+}
+
+// StartInstance start an EC2 instance
+func (e *Ec2Engine) StartInstance(bot BotEnv, spec ServerSpec, env map[string]string, serverName string) (string, error) {
+	return StartEc2VM(bot.Lsdc2Stack, spec, env)
 }
 
 type ServerSpec struct {
@@ -388,7 +409,7 @@ func (srv Server) StartInstance(bot BotEnv, srvTier EngineTier) (Instance, error
 	}
 
 	// Build the instance environment
-	instEnvMap := map[string]string{
+	env := map[string]string{
 		"LSDC2_QUEUE_URL": bot.QueueUrl,
 		"LSDC2_LOG_GROUP": bot.LogGroup,
 		"LSDC2_BUCKET":    bot.Bucket,
@@ -396,26 +417,16 @@ func (srv Server) StartInstance(bot BotEnv, srvTier EngineTier) (Instance, error
 		"DEBUG":           os.Getenv("DEBUG"),
 	}
 	if spec.EnvMap != nil {
-		maps.Copy(instEnvMap, spec.EnvMap)
+		maps.Copy(env, spec.EnvMap)
 	}
-	maps.Copy(instEnvMap, srv.EnvMap)
+	maps.Copy(env, srv.EnvMap)
 
-	if spec.EngineType == EcsEngineType {
-		if err := RegisterTaskFamily(bot.Lsdc2Stack, spec, instEnvMap, srv.Name); err != nil {
-			return Instance{}, fmt.Errorf("RegisterTask / %w", err)
-		}
-		taskArn, err := StartEcsTask(bot.Lsdc2Stack, spec, srv.Name)
-		if err != nil {
-			return Instance{}, fmt.Errorf("StartEcsTask / %w", err)
-		}
-		inst.EngineID = taskArn
-	} else {
-		instanceID, err := StartEc2VM(bot.Lsdc2Stack, spec, instEnvMap)
-		if err != nil {
-			return Instance{}, fmt.Errorf("StartEc2Instance / %w", err)
-		}
-		inst.EngineID = instanceID
+	engineId, err := spec.Engine.StartInstance(bot, spec, env, srv.Name)
+	if err != nil {
+		return Instance{}, fmt.Errorf("StartServer / %w", err)
 	}
+	inst.EngineID = engineId
+
 	return inst, nil
 }
 
@@ -441,8 +452,7 @@ func (inst Instance) StopInstance(bot BotEnv) error {
 			return fmt.Errorf("DeregisterTaskFamily / %w", err)
 		}
 	} else {
-		err := SendCommand(inst.EngineID, "sudo systemctl stop lsdc2.service")
-		if err != nil {
+		if err := SendCommand(inst.EngineID, "sudo systemctl stop lsdc2.service"); err != nil {
 			return fmt.Errorf("StopEc2Instance / %w", err)
 		}
 	}
