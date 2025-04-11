@@ -299,7 +299,7 @@ func RegisterTaskFamily(stack Lsdc2Stack, spec ServerSpec, env map[string]string
 				Image:        aws.String(ecsSpec.Image),
 				Name:         aws.String(serverName + "_container"),
 				Environment:  envArray,
-				PortMappings: spec.AwsPortSpec(),
+				PortMappings: spec.AwsPortMapping(),
 				LogConfiguration: &ecsTypes.LogConfiguration{
 					LogDriver: ecsTypes.LogDriverAwslogs,
 					Options: map[string]string{

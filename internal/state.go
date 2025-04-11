@@ -6,7 +6,6 @@ import (
 	"maps"
 	"os"
 	"sort"
-	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
@@ -178,21 +177,15 @@ func (e *Ec2Engine) ApplyEngineTier(tier EngineTier) {
 	}
 }
 
-// TODO: implement a PortAndProtocol struct in case ECS allow for udp+tcp port forward
-// type PortAndProtocol struct {
-// 	Port     int32  `json:"port"`
-// 	Protocol string `json:"protocol"`
-// }
-
 type ServerSpec struct {
-	Name          string            `json:"name" dynamodbav:"key"`
-	PortMap       map[string]string `json:"portMap"`
-	EnvMap        map[string]string `json:"envMap"`
-	EnvParamMap   map[string]string `json:"envParamMap"`
-	SecurityGroup string            `json:"securityGroup"`
-	ServerCount   int               `json:"severCount"`
-	EngineType    EngineType        `json:"engineType"`
-	Engine        Engine            `json:"engine"`
+	Name          string             `json:"name" dynamodbav:"key"`
+	Ingress       map[string][]int32 `json:"ingress"`
+	EnvMap        map[string]string  `json:"envMap"`
+	EnvParamMap   map[string]string  `json:"envParamMap"`
+	SecurityGroup string             `json:"securityGroup"`
+	ServerCount   int                `json:"severCount"`
+	EngineType    EngineType         `json:"engineType"`
+	Engine        Engine             `json:"engine"`
 }
 
 // Custom JSON unmarshaler for the ServerSpec type
@@ -265,8 +258,8 @@ func (s ServerSpec) MissingField() []string {
 	if s.Name == "" {
 		missingFields = append(missingFields, "name")
 	}
-	if len(s.PortMap) == 0 {
-		missingFields = append(missingFields, "portMap")
+	if len(s.Ingress) == 0 {
+		missingFields = append(missingFields, "ingress")
 	}
 
 	if s.Engine != nil {
@@ -277,57 +270,76 @@ func (s ServerSpec) MissingField() []string {
 }
 
 // OpenPorts returns a string representation of ServerSpec ports
-func (s ServerSpec) OpenPorts() []string {
-	keys := make([]string, len(s.PortMap))
+func (s ServerSpec) DescribeIngress() []string {
+	ingressCount := 0
+	for _, ports := range s.Ingress {
+		ingressCount = ingressCount + len(ports)
+	}
 
+	describedIngress := make([]string, ingressCount)
 	idx := 0
-	for k := range s.PortMap {
-		keys[idx] = k
+	for proto, ports := range s.Ingress {
+		for _, port := range ports {
+			describedIngress[idx] = fmt.Sprintf("%d/%s", port, proto)
+		}
 		idx++
 	}
-	sort.Strings(keys)
-	return keys
+	sort.Strings(describedIngress)
+
+	return describedIngress
 }
 
-// AwsPortSpec returns a []*ecs.PortMapping representation of
+// AwsPortMapping returns a []*ecs.PortMapping representation of
 // the ServerSpec ports
-func (s ServerSpec) AwsPortSpec() []ecsTypes.PortMapping {
-	portArray := make([]ecsTypes.PortMapping, len(s.PortMap))
-	idx := 0
-	for portStr, protocolStr := range s.PortMap {
-		var protocol ecsTypes.TransportProtocol
-		if protocolStr == "udp" {
-			protocol = ecsTypes.TransportProtocolUdp
-		} else {
-			protocol = ecsTypes.TransportProtocolTcp
-		}
-		port, _ := strconv.ParseInt(portStr, 10, 64)
-		portArray[idx] = ecsTypes.PortMapping{
-			ContainerPort: aws.Int32(int32(port)),
-			HostPort:      aws.Int32(int32(port)),
-			Protocol:      protocol,
-		}
-		idx = idx + 1
+func (s ServerSpec) AwsPortMapping() []ecsTypes.PortMapping {
+	ingressCount := 0
+	for _, ports := range s.Ingress {
+		ingressCount = ingressCount + len(ports)
 	}
-	return portArray
+
+	portMapping := make([]ecsTypes.PortMapping, ingressCount)
+	idx := 0
+	for proto, ports := range s.Ingress {
+		for _, port := range ports {
+			var protocol ecsTypes.TransportProtocol
+			if proto == "udp" {
+				protocol = ecsTypes.TransportProtocolUdp
+			} else {
+				protocol = ecsTypes.TransportProtocolTcp
+			}
+			portMapping[idx] = ecsTypes.PortMapping{
+				ContainerPort: aws.Int32(port),
+				HostPort:      aws.Int32(port),
+				Protocol:      protocol,
+			}
+			idx = idx + 1
+		}
+	}
+	return portMapping
 }
 
 // AwsIpPermissionSpec returns a []*ec2.IpPermission representation of
 // the ServerSpec ports and protocols
 func (s ServerSpec) AwsIpPermissionSpec() []ec2Types.IpPermission {
-	permissions := make([]ec2Types.IpPermission, len(s.PortMap))
+	ingressCount := 0
+	for _, ports := range s.Ingress {
+		ingressCount = ingressCount + len(ports)
+	}
+
+	permissions := make([]ec2Types.IpPermission, ingressCount)
 	idx := 0
-	for portStr, protocol := range s.PortMap {
-		port, _ := strconv.ParseInt(portStr, 10, 64)
-		permissions[idx] = ec2Types.IpPermission{
-			FromPort:   aws.Int32(int32(port)),
-			ToPort:     aws.Int32(int32(port)),
-			IpProtocol: aws.String(protocol),
-			IpRanges: []ec2Types.IpRange{
-				{CidrIp: aws.String("0.0.0.0/0")},
-			},
+	for proto, ports := range s.Ingress {
+		for _, port := range ports {
+			permissions[idx] = ec2Types.IpPermission{
+				FromPort:   aws.Int32(port),
+				ToPort:     aws.Int32(port),
+				IpProtocol: aws.String(proto),
+				IpRanges: []ec2Types.IpRange{
+					{CidrIp: aws.String("0.0.0.0/0")},
+				},
+			}
+			idx = idx + 1
 		}
-		idx = idx + 1
 	}
 	return permissions
 }
@@ -372,7 +384,7 @@ func (srv Server) StartInstance(bot BotEnv, srvTier EngineTier) (Instance, error
 		ServerName:      srv.Name,
 		ServerChannelID: srv.ChannelID,
 		ServerGuildID:   srv.GuildID,
-		OpenPorts:       fmt.Sprintf("%s", spec.OpenPorts()),
+		OpenPorts:       fmt.Sprintf("%s", spec.DescribeIngress()),
 	}
 
 	// Build the instance environment
