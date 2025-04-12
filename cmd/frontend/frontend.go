@@ -324,19 +324,19 @@ func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGate
 // In this section, "frontend loop" or "frontloop" refer to the fact that the
 // frontend may call itself. This is the case if a command returns a
 // MessageComponent or Modal interaction: the bot call sequence looks like this:
-// 	1. ApplicationCommand handling (frontent)
+// 	1. ApplicationCommand handling (frontend)
 //  2. MessageComponent/Modal handling (frontend)
 //	3. Backend handling
 //
-// The transmission of intent between the various steps use the BackendCmd structure.
+// The transmission of intent between the various steps uses the BackendCmd structure.
 // Between steps 1 and 2, the BackendCmd is marshalled into CustomID, which has a
-// 100 bytes length limit. Between step 1/2 and 3, the BackendCmd is is marshalled
+// 100 bytes length limit. Between step 1/2 and 3, the BackendCmd is marshalled
 // in JSON over an AWS SQS Queue.
 //
 // Ref: https://discord.com/developers/docs/interactions/message-components#custom-id
 
 // gameRegisterFrontloop is the first function triggered by a game registration
-// command. It returns a modal to  prompt the user for the ServerSpec.
+// command. It returns a modal to prompt the user for the ServerSpec.
 func (bot Frontend) gameRegisterFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 
@@ -351,7 +351,7 @@ func (bot Frontend) gameRegisterFrontloop(itn discordgo.Interaction) (events.API
 	return bot.textPrompt(cmd, "Register new game", "Paste LSDC2 json spec", `{"name": "gamename", "image": "repo/image:tag" ... }`)
 }
 
-// engineTierRegisterFrontloop is the first function triggered by a engine tier
+// engineTierRegisterFrontloop is the first function triggered by an engine tier
 // registration command. It returns a modal to prompt the user for the EngineTier.
 func (bot Frontend) engineTierRegisterFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	cmd := internal.BackendCmd{Args: &internal.RegisterEngineTierArgs{}}
@@ -359,7 +359,7 @@ func (bot Frontend) engineTierRegisterFrontloop(itn discordgo.Interaction) (even
 }
 
 // welcomeGuildFrontloop is the first function triggered by a guild welcoming
-// command. The function simply reply with a confirmation modal.
+// command. The function simply replies with a confirmation modal.
 func (bot Frontend) welcomeGuildFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	cmd := internal.BackendCmd{
 		Args: &internal.WelcomeArgs{
@@ -372,7 +372,7 @@ func (bot Frontend) welcomeGuildFrontloop(itn discordgo.Interaction) (events.API
 }
 
 // guildGoodbyeFrontloop is the first function triggered by a guild goodbyeing
-// command. The function simply reply with a confirmation modal.
+// command. The function simply replies with a confirmation modal.
 func (bot Frontend) guildGoodbyeFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	cmd := internal.BackendCmd{
 		Args: &internal.GoodbyeArgs{
@@ -385,10 +385,10 @@ func (bot Frontend) guildGoodbyeFrontloop(itn discordgo.Interaction) (events.API
 }
 
 // serverCreationFrontloop is the first function triggered by a server creation
-// command. The function fetch the game spec details from DynamoDB table then
+// command. The function fetches the game spec details from DynamoDB table then
 // branches between 2 cases:
 //  1. If the spec requires parameters (as defined by the Params field),
-//     the handler reply with a modal to prompt the parameters from the users.
+//     the handler replies with a modal to prompt the parameters from the users.
 //  2. Else, skip the frontloop and directly calls the backend service to
 //     create the server.
 func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
@@ -428,10 +428,10 @@ func (bot Frontend) serverCreationFrontloop(itn discordgo.Interaction) (events.A
 }
 
 // serverConfigurationFrontloop is the first function triggered by a server conf
-// command. The function fetch the game spec details from DynamoDB table then
+// command. The function fetches the game spec details from DynamoDB table then
 // branches between 2 cases:
 //  1. If the spec requires parameters (as defined by the Params field),
-//     the handler reply with a modal to prompt the parameters from the users.
+//     the handler replies with a modal to prompt the parameters from the users.
 //  2. Else, skip the frontloop and reply that the server does not require conf.
 func (bot Frontend) serverConfigurationFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
@@ -469,11 +469,11 @@ func (bot Frontend) serverConfigurationFrontloop(itn discordgo.Interaction) (eve
 
 // serverDestructionFrontloop is the first function triggered by a server
 // destruction command. The function performs the following steps, then
-// reply with a confirmation modal.
-//  1. The server details are fetched from the DynamoDB table
-//  2. A first check ensure that the server with the provided name exists
-//  3. Then a check is made to ensure that the server is not currently running
-//  4. Finally, a confirmation modal is replied
+// replies with a confirmation modal:
+//  1. The server details are fetched from the DynamoDB table.
+//  2. A first check ensures that the server with the provided name exists.
+//  3. Then a check is made to ensure that the server is not currently running.
+//  4. Finally, a confirmation modal is returned.
 func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 	serverName := acd.Options[0].StringValue()
@@ -500,7 +500,8 @@ func (bot Frontend) serverDestructionFrontloop(itn discordgo.Interaction) (event
 	return bot.confirm(cmd, title, confimationText)
 }
 
-// TODO: improve the modal to enable advance configration
+// _configurationModal generates a modal for configuring a server based on the provided
+// command and server specification.
 func (bot Frontend) _configurationModal(cmd internal.BackendCmd, spec internal.ServerSpec) (events.APIGatewayProxyResponse, error) {
 	paramsSpec := make(map[string]string, len(spec.Params))
 	for env, label := range spec.Params {
@@ -512,22 +513,22 @@ func (bot Frontend) _configurationModal(cmd internal.BackendCmd, spec internal.S
 
 //===== Section: backend call
 
-// Functions in this section call the the backend to perform/finalise the
+// Functions in this section call the backend to perform/finalize the
 // requested command.
 
-// callBackend queue up a BackendCmd for the backend
+// callBackend queues up a BackendCmd for the backend.
 func (bot Frontend) callBackend(cmd internal.BackendCmd) error {
 	bot.Logger.Debug("calling backend command", zap.Any("cmd", cmd))
 	return internal.QueueMarshalledCmd(bot.QueueUrl, cmd)
 }
 
-// genericConfirmedCall is used as the step 2 of a frontloop, after the step 1
+// genericConfirmedCall is used as the second step of a frontloop, after the first step
 // replied with a confirmation modal.
 //
-// Note 1: this function is triggered AFTER user confirmation so the function
-// simply call the backend.
+// Note 1: This function is triggered AFTER user confirmation, so the function
+// simply calls the backend.
 //
-// Note 2: routing between step 1 and 2 has to be explicitly developped
+// Note 2: Routing between step 1 and step 2 must be explicitly developed
 // (see routeModalSubmit).
 func (bot Frontend) genericConfirmedCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
@@ -549,7 +550,7 @@ func (bot Frontend) genericConfirmedCall(itn discordgo.Interaction) (events.APIG
 
 // gameRegisterCall is used as the step 2 of a frontloop, after the step 1
 // replied with a configuration modal for the ServerSpec. The function
-// gathers the prompted spec and call the backend.
+// gathers the prompted spec and calls the backend.
 func (bot Frontend) gameRegisterCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
 	cmd, err := internal.UnmarshallCustomID(msd.CustomID)
@@ -576,7 +577,7 @@ func (bot Frontend) gameRegisterCall(itn discordgo.Interaction) (events.APIGatew
 
 // engineTierRegisterCall is used as the step 2 of a frontloop, after the step 1
 // replied with a configuration modal for the EngineTier. The function
-// gathers the prompted spec and call the backend.
+// gathers the prompted spec and calls the backend.
 func (bot Frontend) engineTierRegisterCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
 	cmd, err := internal.UnmarshallCustomID(msd.CustomID)
@@ -603,7 +604,7 @@ func (bot Frontend) engineTierRegisterCall(itn discordgo.Interaction) (events.AP
 
 // serverCreationCall is used as the step 2 of a frontloop, after the step 1
 // replied with a server configuration modal. The function gathers the prompted
-// parameters and call the backend.
+// parameters and calls the backend.
 func (bot Frontend) serverCreationCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
 	cmd, err := internal.UnmarshallCustomID(msd.CustomID)
@@ -631,7 +632,7 @@ func (bot Frontend) serverCreationCall(itn discordgo.Interaction) (events.APIGat
 	return bot.ackMessage()
 }
 
-// serverStartCall send a start command for the backend.
+// serverStartCall sends a start command for the backend.
 func (bot Frontend) serverStartCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	acd := itn.ApplicationCommandData()
 
@@ -659,7 +660,7 @@ func (bot Frontend) serverStartCall(itn discordgo.Interaction) (events.APIGatewa
 
 // serverConfigurationCall is used as the step 2 of a frontloop, after the step 1
 // replied with a server configuration modal. The function gathers the prompted
-// parameters and call the backend.
+// parameters and calls the backend.
 func (bot Frontend) serverConfigurationCall(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
 	msd := itn.ModalSubmitData()
 	cmd, err := internal.UnmarshallCustomID(msd.CustomID)
@@ -744,7 +745,7 @@ func (bot Frontend) memberKickCall(itn discordgo.Interaction) (events.APIGateway
 // stopServer stops the server for the given channel ID. It performs the
 // following steps:
 //  1. Retrieves the instance details from DynamoDB.
-//  2. Verifies that the task is not already stop.
+//  2. Verifies that the task is not already stopped.
 //  3. If not, issues the stop request.
 func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse, error) {
 	inst, err := internal.DynamodbScanFindFirst[internal.Instance](bot.InstanceTable, "ServerChannelID", channelID)
@@ -754,8 +755,8 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	}
 
 	// Check that the task is not already stopped
-	// TODO: ensure that stoping an EC2 instance while it start is safe.
-	// If not, only allow stoping if the instance is running
+	// TODO: ensure that stopping an EC2 instance while it starts is safe.
+	// If not, only allow stopping if the instance is running
 	if inst.EngineID == "" {
 		return bot.reply("🟥 Server offline")
 	} else {
@@ -770,7 +771,7 @@ func (bot Frontend) stopServer(channelID string) (events.APIGatewayProxyResponse
 	}
 
 	// Issue the task stop request
-	bot.Logger.Debug("stoping: stop task", zap.Any("instance", inst))
+	bot.Logger.Debug("stopping: stop task", zap.Any("instance", inst))
 	if err = inst.StopInstance(bot.BotEnv); err != nil {
 		bot.Logger.Error("error in stopServer", zap.String("culprit", "StopTask"), zap.Error(err))
 		return bot.reply("🚫 Internal error")
@@ -891,7 +892,7 @@ var __spinupScanCache []internal.ServerSpec
 var __startScanCache []internal.EngineTier
 
 // autocompleteSpinup returns an autocomplete response with the choices of
-// registered games. Note that user inputs is completly ignored: it is not
+// registered games. Note that user inputs are completely ignored: they are not
 // used to filter the choices.
 func (bot Frontend) autocompleteSpinup(opt []*discordgo.ApplicationCommandInteractionDataOption) (events.APIGatewayProxyResponse, error) {
 	var allSpec []internal.ServerSpec
@@ -929,7 +930,7 @@ func (bot Frontend) autocompleteSpinup(opt []*discordgo.ApplicationCommandIntera
 }
 
 // autocompleteStart returns an autocomplete response with the choices of
-// registered engine tiers. Note that user inputs is completly ignored: it is not
+// registered engine tiers. Note that user inputs are completely ignored: they are not
 // used to filter the choices.
 func (bot Frontend) autocompleteStart(opt []*discordgo.ApplicationCommandInteractionDataOption) (events.APIGatewayProxyResponse, error) {
 	var allTiers []internal.EngineTier
@@ -968,7 +969,7 @@ func (bot Frontend) autocompleteStart(opt []*discordgo.ApplicationCommandInterac
 
 //===== Section: bot reply helpers
 
-// ackMessage acknowledge to Discord that the ApplicationCommand is being handled
+// ackMessage acknowledges to Discord that the ApplicationCommand is being handled
 // (Discord displays "bot thinking ...")
 func (bot Frontend) ackMessage() (events.APIGatewayProxyResponse, error) {
 	itnResp := discordgo.InteractionResponse{
@@ -982,7 +983,7 @@ func (bot Frontend) ackMessage() (events.APIGatewayProxyResponse, error) {
 	return internal.Json200(string(jsonBytes[:])), nil
 }
 
-// ackComponent acknowledge to Discord that the MessageComponent is being handled
+// ackComponent acknowledges to Discord that the MessageComponent is being handled
 // (Discord displays "bot thinking ...")
 func (bot Frontend) ackComponent() (events.APIGatewayProxyResponse, error) {
 	itnResp := discordgo.InteractionResponse{
@@ -1055,7 +1056,7 @@ func (bot Frontend) replyAutocomplete(choices []*discordgo.ApplicationCommandOpt
 }
 
 // confirm replies with a modal containing a single TextInput with the
-// specified message. It does not strictly looks like a confirmation
+// specified message. It does not strictly look like a confirmation
 // modal but this is the closest found as of this commit.
 func (bot Frontend) confirm(cmd internal.BackendCmd, title string, msg string) (events.APIGatewayProxyResponse, error) {
 	customID, err := internal.MarshalCustomID(cmd)
@@ -1136,7 +1137,7 @@ func (bot Frontend) modal(cmd internal.BackendCmd, title string, paramSpec map[s
 // textPrompt replies with a modal containing a single TextInput.
 // It is very similar to bot.confirm: the only difference is that
 // this function uses the Placeholder field of the prompt, which
-// has a lenght limit (and thus fail on longer confirmation message).
+// has a length limit (and thus fails on longer confirmation messages).
 func (bot Frontend) textPrompt(cmd internal.BackendCmd, title string, label string, placeholder string) (events.APIGatewayProxyResponse, error) {
 	customID, err := internal.MarshalCustomID(cmd)
 	if err != nil {

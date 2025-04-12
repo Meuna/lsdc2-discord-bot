@@ -18,6 +18,7 @@ import (
 
 //===== Section: BotEnv
 
+// DiscordSecrets are retrieved from SSM
 type DiscordSecrets struct {
 	Pkey         string `json:"pkey"`
 	Token        string `json:"token"`
@@ -25,6 +26,7 @@ type DiscordSecrets struct {
 	ClientSecret string `json:"clientSecret"`
 }
 
+// Lsdc2Stack are retrieved from enviroment variables
 type Lsdc2Stack struct {
 	AwsRegion           string   `env:"AWS_REGION"`
 	DiscordParam        string   `env:"DISCORD_PARAM"`
@@ -80,6 +82,7 @@ func InitBot() (BotEnv, error) {
 
 //===== Section: EngineTier
 
+// EngineTier are received from user command
 type EngineTier struct {
 	Name          string                  `json:"name" dynamodbav:"key"`
 	Cpu           string                  `json:"cpu"`
@@ -113,12 +116,14 @@ const (
 	Ec2EngineType EngineType = "ec2"
 )
 
+// Engine are part of a ServerSpec, received from user command
 type Engine interface {
 	MissingField() []string
 	ApplyEngineTier(EngineTier)
 	StartInstance(BotEnv, ServerSpec, map[string]string, string) (string, error)
 }
 
+// EcsEngine hold specific spec for ECS engine
 type EcsEngine struct {
 	Image   string `json:"image"`
 	Cpu     string `json:"cpu"`
@@ -126,7 +131,7 @@ type EcsEngine struct {
 	Storage int32  `json:"storage"`
 }
 
-// MissingField returns a list of required ServerSpec fields
+// MissingField returns a list of required EcsEngine fields
 func (e EcsEngine) MissingField() []string {
 	missingFields := []string{}
 	if e.Image == "" {
@@ -165,6 +170,7 @@ func (e *EcsEngine) StartInstance(bot BotEnv, spec ServerSpec, env map[string]st
 	return taskArn, nil
 }
 
+// Ec2Engine hold specific spec for EC2 engine
 type Ec2Engine struct {
 	Ami           string                  `json:"ami"`
 	InstanceTypes []ec2Types.InstanceType `json:"instanceTypes"`
@@ -173,7 +179,7 @@ type Ec2Engine struct {
 	Fastboot      bool                    `json:"fastboot"`
 }
 
-// MissingField returns a list of required ServerSpec fields
+// MissingField returns a list of required Ec2Engine fields
 func (e Ec2Engine) MissingField() []string {
 	missingFields := []string{}
 	if e.Ami == "" {
@@ -198,6 +204,7 @@ func (e *Ec2Engine) StartInstance(bot BotEnv, spec ServerSpec, env map[string]st
 	return StartEc2VM(bot.Lsdc2Stack, spec, env)
 }
 
+// ServerSpec are received from user command
 type ServerSpec struct {
 	Name          string             `json:"name" dynamodbav:"key"`
 	Ingress       map[string][]int32 `json:"ingress"`
@@ -209,7 +216,9 @@ type ServerSpec struct {
 	Engine        Engine             `json:"engine"`
 }
 
-// Custom JSON unmarshaler for the ServerSpec type
+// Custom JSON unmarshaler for the ServerSpec. It determines the
+// Engine type based on the EngineType field and unmarshals the
+// Engine accordingly.
 func (s *ServerSpec) UnmarshalJSON(data []byte) error {
 	type Alias ServerSpec
 	aux := &struct {
@@ -235,7 +244,8 @@ func (s *ServerSpec) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(aux.Engine, s.Engine)
 }
 
-// Custom DynamoDB unmarshaler for the ServerSpec type
+// Custom DynamoDB unmarshaler for the ServerSpec type. It set the
+// EngineType field value based on the Engine type.
 func (s *ServerSpec) UnmarshalDynamoDBAttributeValue(av dynamodbTypes.AttributeValue) error {
 	type Alias ServerSpec
 	aux := &struct {
@@ -367,6 +377,7 @@ func (s ServerSpec) AwsIpPermissionSpec() []ec2Types.IpPermission {
 
 //===== Section: GuildConf
 
+// GuildConf are built during guild welcomming command
 type GuildConf struct {
 	GuildID           string `dynamodbav:"key"`
 	ChannelCategoryID string
@@ -378,6 +389,7 @@ type GuildConf struct {
 
 //===== Section: Server
 
+// Server are built during server spinup command
 type Server struct {
 	ChannelID string `dynamodbav:"key"`
 	GuildID   string
@@ -432,6 +444,7 @@ func (srv Server) StartInstance(bot BotEnv, srvTier EngineTier) (Instance, error
 
 //===== Section: Instace
 
+// Instance are built during server instance start command
 type Instance struct {
 	EngineID        string `dynamodbav:"key"`
 	EngineType      EngineType

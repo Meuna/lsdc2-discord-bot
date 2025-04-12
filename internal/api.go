@@ -32,11 +32,9 @@ var (
 	UserCmd       = []string{StartAPI, StopAPI, StatusAPI, DownloadAPI, UploadAPI}
 )
 
-// Structure used to communicate bot intent between the frontend and the
-// backend, but also between frontend roundtrips (modals and message
-// components). The Args and Api field works together, with the Api field
-// set by the Args Type upon JSON marshalling and the Args Type set by the
-// Api field upon unmarshalling.
+// BackendCmd represents a command exchanged between the frontend and backend,
+// or during frontend roundtrips (e.g., modals and message components).
+// The Api field identifies the command type, and Args holds the command-specific data.
 type BackendCmd struct {
 	AppID string `json:",omitempty"`
 	Token string `json:",omitempty"`
@@ -44,11 +42,8 @@ type BackendCmd struct {
 	Args  any
 }
 
-// Custom JSON unmarshaler for the BackendCmd type. It first unmarshals
-// the JSON into a temporary structure to handle the dynamic nature of
-// the Args field based on the Api field. Depending on the value of Api,
-// it initializes the appropriate Args structure and then unmarshals the
-// Args field into this structure.
+// UnmarshalJSON customizes JSON unmarshalling for BackendCmd. It determines the
+// Args type based on the Api field and unmarshals the Args accordingly.
 func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 	type Alias BackendCmd
 	var aux struct {
@@ -93,9 +88,8 @@ func (cmd *BackendCmd) UnmarshalJSON(src []byte) error {
 	return json.Unmarshal(aux.Args, cmd.Args)
 }
 
-// Custom JSON marshaler for the BackendCmd type. It sets the Api field
-// based on the type of Args and then marshals the BackendCmd to JSON.
-// If the Args type is not recognized, it returns an error.
+// MarshalJSON customizes JSON marshalling for BackendCmd. It sets the Api field
+// based on the Args type and marshals the command to JSON.
 func (cmd BackendCmd) MarshalJSON() ([]byte, error) {
 	type backendCmd BackendCmd
 
@@ -188,14 +182,8 @@ type TaskNotifyArgs struct {
 	Message    string
 }
 
-// QueueMarshalledCmd marshals a BackendCmd into JSON and sends it to the specified queue URL.
-//
-// Parameters:
-//   - queueUrl: The URL of the queue where the message should be sent.
-//   - cmd: The BackendCmd to be marshalled and sent.
-//
-// Returns:
-//   - error: An error if the marshalling or sending fails, otherwise nil.
+// QueueMarshalledCmd marshals a BackendCmd to JSON and sends it to the
+// specified queue URL. Returns an error if marshalling or sending fails.
 func QueueMarshalledCmd(queueUrl string, cmd BackendCmd) error {
 	bodyBytes, err := json.Marshal(cmd)
 	if err != nil {
@@ -204,25 +192,17 @@ func QueueMarshalledCmd(queueUrl string, cmd BackendCmd) error {
 	return QueueMessage(queueUrl, string(bodyBytes[:]))
 }
 
-// UnmarshallQueuedCmd takes an SQSMessage record, unmarshals its JSON-encoded body
-// to returns a BackendCmd struct.
-//
-// Parameters:
-//   - record: events.SQSMessage containing the JSON-encoded command in its Body.
-//
-// Returns:
-//   - BackendCmd: The unmarshalled command.
-//   - error: Any error encountered during the unmarshalling process.
+// QueueMarshalledCmd marshals a BackendCmd to JSON and sends it to the
+// specified queue URL. Returns an error if marshalling or sending fails.
 func UnmarshallQueuedCmd(record events.SQSMessage) (BackendCmd, error) {
 	cmd := BackendCmd{}
 	err := json.Unmarshal([]byte(record.Body), &cmd)
 	return cmd, err
 }
 
-// MarshalCustomID marshals a BackendCmd into a JSON string and ensures
-// the resulting string does not exceed 100 characters, as required by
-// the Discord API for CustomIDs. If the marshaled JSON exceeds this
-// limit, an error is returned.
+// MarshalCustomID marshals a BackendCmd to a JSON string, ensuring it
+// does not exceed 100 characters, as required by the Discord API for
+// CustomIDs. Returns an error if the limit is exceeded.
 func MarshalCustomID(cmd BackendCmd) (string, error) {
 	bodyBytes, err := json.Marshal(cmd)
 	if err != nil {

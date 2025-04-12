@@ -31,7 +31,6 @@ import (
 //===== Section: SSM
 
 // GetParameter retrieves the value of a parameter from AWS Systems Manager Parameter Store.
-// The parameter is assumed to be encrypted using AWS managed key.
 func GetParameter(name string) (string, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -144,7 +143,7 @@ func DynamodbGetItem(tableName string, key string, out any) error {
 	return attributevalue.UnmarshalMap(rawOut.Item, out)
 }
 
-// DynamodbPutItem inserts an item into a specified DynamoDB table
+// DynamodbPutItem inserts an item into the specified DynamoDB table.
 func DynamodbPutItem(tableName string, item any) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -184,7 +183,7 @@ func DynamodbDeleteItem(tableName string, key string) error {
 	return err
 }
 
-// DynamodbScanDo scans the specified DynamoDB table and return a list of unmarshalled items
+// DynamodbScan scans the specified DynamoDB table and returns a list of unmarshalled items
 func DynamodbScan[T any](tableName string) ([]T, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -210,9 +209,8 @@ func DynamodbScan[T any](tableName string) ([]T, error) {
 	return out, nil
 }
 
-// DynamodbScanFindFirst scans the specified DynamoDB table and finds the
-// first item that matches the specified key and value. The item is
-// unmarshalled into the provided out pointer.
+// DynamodbScanFindFirst scans the specified DynamoDB table and returns the first item
+// that matches the specified key-value pair. The item is unmarshalled into the output type.
 func DynamodbScanFindFirst[T any](tableName string, key string, value string) (out T, err error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -255,15 +253,9 @@ func ecsTags(tagMap map[string]string) []ecsTypes.Tag {
 	return tagList
 }
 
-// RegisterTaskFamily registers a new ECS task definition with the specified parameters.
-//
-// Parameters:
-//   - region: The AWS region.
-//   - srvName: The name of the task definition family.
-//   - spec: The server specification containing CPU, memory, image,
-//     environment variables, and port mappings.
-//   - stack: The stack configuration containing task role ARN, execution
-//     role ARN, and log group.
+// RegisterTaskFamily registers a new ECS task definition using the provided
+// stack configuration, server specification, environment variables,
+// and server name
 func RegisterTaskFamily(stack Lsdc2Stack, spec ServerSpec, env map[string]string, serverName string) error {
 	ecsSpec := spec.Engine.(*EcsEngine)
 	cfg, err := config.LoadDefaultConfig(context.TODO())
@@ -346,7 +338,7 @@ func DeregisterTaskFamily(stack Lsdc2Stack, serverName string) error {
 	return err
 }
 
-// StartEcsTask starts an ECS task for the provided family and security groupe.
+// StartEcsTask starts an ECS task for the specified family and security group.
 // Returns the ARN of the started task.
 func StartEcsTask(stack Lsdc2Stack, spec ServerSpec, serverName string) (arn string, err error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
@@ -389,7 +381,7 @@ func StartEcsTask(stack Lsdc2Stack, spec ServerSpec, serverName string) (arn str
 	return
 }
 
-// StopEcsTask stops the provided ECS task
+// StopEcsTask stops the specified ECS task in the sepcified cluster.
 func StopEcsTask(taskArn string, ecsCluster string) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -405,7 +397,7 @@ func StopEcsTask(taskArn string, ecsCluster string) error {
 	return err
 }
 
-// DescribeTask retrieves the details of the provided ECS task
+// DescribeTask retrieves the details of the specified ECS task.
 func DescribeTask(taskArn string, ecsCluster string) (ecsTypes.Task, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -499,8 +491,8 @@ func ec2Tags(resourceType ec2Types.ResourceType, tagMap map[string]string) []ec2
 	}
 }
 
-// StartEc2VM starts a new EC2 instance for the provided server spec.
-// Returns the ID of the started instance.
+// StartEc2VM launches a new EC2 instance based on the provided server specification.
+// Returns the instance ID of the started instance.
 func StartEc2VM(stack Lsdc2Stack, spec ServerSpec, env map[string]string) (string, error) {
 	ec2Spec, ok := spec.Engine.(*Ec2Engine)
 	if !ok {
@@ -602,7 +594,7 @@ func isInsufficientCapacityError(err error) bool {
 	return false
 }
 
-// SendCommand stops the specified EC2 instance
+// SendCommand sends a shell command to the specified EC2 instance using AWS SSM
 func SendCommand(instanceID string, command string) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -621,7 +613,7 @@ func SendCommand(instanceID string, command string) error {
 	return err
 }
 
-// DescribeInstance retrieves the details of the provided EC2 instance
+// DescribeInstance retrieves the details of the specified EC2 instance.
 func DescribeInstance(instanceID string) (ec2Types.Instance, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -644,7 +636,8 @@ func DescribeInstance(instanceID string) (ec2Types.Instance, error) {
 	return result.Reservations[0].Instances[0], nil
 }
 
-// GetAmiID returns the first AMI that match the provided name
+// GetAmiID retrieves the AMI ID for the specified AMI name.
+// Returns an error if no matching AMI is found.
 func GetAmiID(amiName string) (string, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -670,8 +663,8 @@ func GetAmiID(amiName string) (string, error) {
 	return *out.Images[0].ImageId, nil
 }
 
-// GetInstanceTypeAndSubnetSortedByPrice returns all the possible
-// instance type and subnet options, sorted by price
+// GetInstanceTypeAndSubnetSortedByPrice retrieves all possible instance type
+// and subnet options, sorted by price, for the specified stack and instance types.
 func GetInstanceTypeAndSubnetSortedByPrice(stack Lsdc2Stack, instanceTypes []ec2Types.InstanceType) ([]instanceTypeAndSubnet, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -724,9 +717,9 @@ func GetInstanceTypeAndSubnetSortedByPrice(stack Lsdc2Stack, instanceTypes []ec2
 	return instAndSn, nil
 }
 
-// RestoreEbsBaseline modify the volume performances of the provided instance
-// to the default gp3 values.
-// TODO: replace hard-coded default gp3 values with somethin more dynamic
+// RestoreEbsBaseline resets the volume performance of the specified instance to
+// the default gp3 values.
+// TODO: replace hardcoded default gp3 values with dynamic configuration.
 func RestoreEbsBaseline(instanceID string) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -752,8 +745,7 @@ func RestoreEbsBaseline(instanceID string) error {
 
 // CreateSecurityGroup creates a new security group in AWS EC2. The security
 // group is given the name and ingress from the specified ServerSpec. It is
-// attached to the VPD of the LSDC2 stack.
-//
+// attached to the VPC of the LSDC2 stack.
 // Returns the ID of the created security group.
 func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (groupID string, err error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
@@ -789,11 +781,9 @@ func CreateSecurityGroup(spec ServerSpec, stack Lsdc2Stack) (groupID string, err
 	return
 }
 
-// EnsureAndWaitSecurityGroupDeletion deletes the specified security group,
-// and implement a small retry/wait loop until the DescribeSecurityGroups call
-// return an empty list.
-//
-// The waiting is hardcoded: it runs 5 times with a 2 second wait between tries.
+// EnsureAndWaitSecurityGroupDeletion deletes the specified security group
+// and waits until it is fully removed. The function retries up to 5 times
+// with a 2-second interval between attempts.
 func EnsureAndWaitSecurityGroupDeletion(groupName string, stack Lsdc2Stack) error {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -852,9 +842,8 @@ func DeleteSecurityGroup(groupID string) error {
 
 //===== Section: S3
 
-// PresignGetS3Object generates a pre-signed URL for downloading the object
-// from from the specified key and S3 bucket. The link expires after the
-// specified duration.
+// PresignGetS3Object generates a pre-signed URL for downloading an object
+// from the specified S3 bucket and key. The URL expires after the given duration.
 func PresignGetS3Object(bucket string, key string, expire time.Duration) (string, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -880,8 +869,8 @@ func PresignGetS3Object(bucket string, key string, expire time.Duration) (string
 	return req.URL, nil
 }
 
-// PresignPutS3Object generates a pre-signed URL for uploading an object for
-// the specified key and S3 bucket. The link expires after the specified duration.
+// PresignPutS3Object generates a pre-signed URL for uploading an object
+// to the specified S3 bucket and key. The URL expires after the given duration.
 func PresignPutS3Object(bucket string, key string, expire time.Duration) (string, error) {
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -907,11 +896,11 @@ func PresignPutS3Object(bucket string, key string, expire time.Duration) (string
 	return req.URL, nil
 }
 
-// PresignMultipartUploadS3Object generates a list of pre-signed URL for uploading
-// an object in multiple parts for the specified key and S3 bucket. The last link is
-// the CompletePart request. The links expires after the specified duration.
+// PresignMultipartUploadS3Object generates pre-signed URLs for uploading an object
+// in multiple parts to the specified S3 bucket and key. The final URL is for completing
+// the multipart upload. URLs expire after the given duration.
 //
-// FIXME: use SDK v2 when it is able to presign completed multipart upload
+// FIXME: Replace with SDK v2 when it supports presigning multipart upload completion.
 func PresignMultipartUploadS3Object(bucket string, key string, parts int, expire time.Duration) ([]string, error) {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
