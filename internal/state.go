@@ -20,6 +20,7 @@ import (
 
 // DiscordSecrets are retrieved from SSM
 type DiscordSecrets struct {
+	OwnerID      string `json:"ownerId"`
 	Pkey         string `json:"pkey"`
 	Token        string `json:"token"`
 	ClientID     string `json:"clientId"`

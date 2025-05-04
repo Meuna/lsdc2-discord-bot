@@ -338,6 +338,11 @@ func (bot Frontend) routeAutocomplete(itn discordgo.Interaction) (events.APIGate
 // gameRegisterFrontloop is the first function triggered by a game registration
 // command. It returns a modal to prompt the user for the ServerSpec.
 func (bot Frontend) gameRegisterFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	// Ensure that the user running the command is the bot owner
+	if itn.User.ID != bot.OwnerID {
+		return bot.reply("🚫 Internal error")
+	}
+
 	acd := itn.ApplicationCommandData()
 
 	args := internal.RegisterGameArgs{}
@@ -354,6 +359,11 @@ func (bot Frontend) gameRegisterFrontloop(itn discordgo.Interaction) (events.API
 // engineTierRegisterFrontloop is the first function triggered by an engine tier
 // registration command. It returns a modal to prompt the user for the EngineTier.
 func (bot Frontend) engineTierRegisterFrontloop(itn discordgo.Interaction) (events.APIGatewayProxyResponse, error) {
+	// Ensure that the user running the command is the bot owner
+	if itn.User.ID != bot.OwnerID {
+		return bot.reply("🚫 Internal error")
+	}
+
 	cmd := internal.BackendCmd{Args: &internal.RegisterEngineTierArgs{}}
 	return bot.textPrompt(cmd, "Register engine tier", "Paste LSDC2 json spec", `[{"name": "2c8gb", "cpu": "2 vCPU", ... }, ...]`)
 }

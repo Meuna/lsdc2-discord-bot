@@ -75,14 +75,24 @@ The bot is now fully deployed on your server !
 
 ## Usage
 
-### Bot admin commands
+### Bot owner commands
+
+The commands are run as bot direct message, by the bot owner (matching the
+User ID recorded in the `/lsdc2/discord-secrets` parameter).
 
 | **Command**                    | **Description**
 | ------------------------------ | ---------------
-| **/welcome-guild**             | Deploy LSDC2 bot commands, channels and roles in the server. Command is run from any server channel, by a server admin.
-| **/goodbye-guild**             | Remove everything related to LSDC2 bot from your guild. Command is run from any server channel, by a server admin.
-| **/register-game** `overwrite` | The LSDC2 bot returns a JSON prompt to add a new `game-type` handled by the bot (see [Game spec](#game-type-specification)). The `overwrite` parameter is used to replace the `game-type` entry if it already exists. Command is run as a bot direct message.
-| **/register-engine-tier**      | The LSDC2 bot returns a JSON prompt to add a new `engine-tier` handled by the bot (see [Engine spec](#server-engine-specification)). Command is run as a bot direct message.
+| **/register-game** `overwrite` | The LSDC2 bot returns a JSON prompt to add a new `game-type` handled by the bot (see [Game spec](#game-type-specification)). The `overwrite` parameter is used to replace the `game-type` entry if it already exists.
+| **/register-engine-tier**      | The LSDC2 bot returns a JSON prompt to add a new `engine-tier` handled by the bot (see [Engine spec](#server-engine-specification)).
+
+### Server admin commands
+
+The commands are run as a server admin, from any server channel.
+
+| **Command**                    | **Description**
+| ------------------------------ | ---------------
+| **/welcome-guild**             | Deploy LSDC2 bot commands, channels and roles in the server.
+| **/goodbye-guild**             | Remove everything related to LSDC2 bot from your guild.
 
 ### LSDC2 Admin commands
 
